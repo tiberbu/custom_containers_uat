@@ -72,8 +72,8 @@ on:
 env:
   TOKEN: ${{ secrets.TOKEN }}
   REGISTRY: registry.digitalocean.com
-  IMAGE_NAME: ${{ inputs.image || env.IMAGE }}
-  IMAGE_VERSION: ${{ inputs.version || env.VERSION }}
+  IMAGE_NAME: ${{ inputs.image }}
+  IMAGE_VERSION: ${{ inputs.version }}
 
 jobs:
   build:

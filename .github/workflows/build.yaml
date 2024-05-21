@@ -1,9 +1,12 @@
 name: Build Image
 
+  
 on:
   push:
     branches:
-      - build
+      - master
+
+  repository_dispatch:
 
   workflow_dispatch:
     inputs:
@@ -35,13 +38,39 @@ on:
         description: dockerfile path from context
         type: string
       registry-user:
-        description: registry username
+        description: user name
         required: false
 
     secrets:
       REGISTRY_PASSWORD:
         description: registry password
         required: false
+    
+  workflow_call:
+    inputs:
+      repo:
+        required: true
+        type: string
+        description: "'erpnext' or 'frappe'"
+      version:
+        required: true
+        type: string
+        description: "Major version, git tags should match 'v{version}.*'; or 'develop'"
+      push:
+        required: true
+        type: boolean
+      python_version:
+        required: true
+        type: string
+        description: Python Version
+      node_version:
+        required: true
+        type: string
+        description: NodeJS Version
+    
+
+env:
+  TOKEN: ${{ secrets.TOKEN }}
 
 jobs:
   build:
@@ -50,20 +79,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      ### Comment start - when not using docker build actions
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Clean Git Cache
+        run: git clean -ffdx && git reset --hard
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      ### Comment end - when not using docker build actions
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ inputs.registry || env.REGISTRY }}
-          username: ${{ inputs.registry-user || github.actor }}
-          password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+      - name: Run Python Script to Update JSON
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          python ci/script.py
 
       - name: Source Build Env
         id: source-build-env
@@ -71,39 +94,29 @@ jobs:
           cat ./ci/build.env >> $GITHUB_ENV
           echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
-
-      ### Using Kaniko (https://github.com/GoogleContainerTools/kaniko)
-      # - uses: int128/kaniko-action@v1
-      #   with:
-      #     push: true
-      #     cache: true
-      #     kaniko-args: |
-      #       --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
-      #       --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
-      #       --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
-      #       --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
-      #       --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-      #       --context=${{ inputs.context || env.CONTEXT }}
-      #       --destination=ghcr.io/${{ github.repository }}/${{ inputs.image || env.IMAGE }}:${{ inputs.version || env.VERSION }}
-      #       --destination=ghcr.io/${{ github.repository }}/${{ inputs.image || env.IMAGE }}:latest
-      #     file: ${{ inputs.dockerfile || env.DOCKERFILE }}
-
-      ### Using docker build
-      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          repository: frappe/frappe_docker
-          path: builds
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - name: Login to Amazon ECR
+        id: login-ecr
+        run: |
+          aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 813389018368.dkr.ecr.eu-west-1.amazonaws.com
+      
+      - uses: int128/kaniko-action@v1
         with:
           push: true
-          context: builds
-          file: builds/${{ inputs.dockerfile || env.DOCKERFILE }}
-          tags: ghcr.io/${{ github.repository }}/${{ inputs.image || env.IMAGE }}:${{ inputs.version || env.VERSION }},ghcr.io/${{ github.repository }}/${{ inputs.image || env.IMAGE }}:latest
-          build-args: |
-            "FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}"
-            "FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}"
-            "PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}"
-            "NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}"
-            "APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}"
+          cache: true
+          kaniko-args: |
+            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
+            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
+            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
+            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
+            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
+            --context=${{ inputs.context || env.CONTEXT }}
+            --destination=813389018368.dkr.ecr.eu-west-1.amazonaws.com/${{ inputs.image || env.IMAGE }}:${{ inputs.version || env.VERSION }}
+            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

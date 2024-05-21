@@ -82,6 +82,18 @@ jobs:
       - name: Clean Git Cache
         run: git clean -ffdx && git reset --hard
 
+      # The default disk size of these runners is ~14GB, this is not enough to run the e2e tests.
+      # Cleanup the disk, see upstream discussion https://github.com/actions/runner-images/issues/2840.
+      - name: Cleanup Disk Space
+        run: |
+          echo "Before removing files:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          echo "After removing files:"
+
       - name: Run Python Script to Update JSON
         env:
           TOKEN: ${{ secrets.TOKEN }}

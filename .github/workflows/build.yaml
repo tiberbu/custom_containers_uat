@@ -119,6 +119,7 @@ jobs:
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
             --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --registry-username=${{ secrets.DIGITAL_OCEAN_KEY }}
-            --registry-password=${{ secrets.DIGITAL_OCEAN_KEY }}
+            --registry-mirror=https://${{ env.REGISTRY }}
+            --registry-mirror-username=${{ secrets.DIGITAL_OCEAN_KEY }}
+            --registry-mirror-password=${{ secrets.DIGITAL_OCEAN_KEY }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

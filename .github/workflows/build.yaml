@@ -71,7 +71,6 @@ on:
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
-  REGISTRY: registry.digitalocean.com/lonius
   IMAGE_NAME: ${{ inputs.image }}
   IMAGE_VERSION: ${{ inputs.version }}
 
@@ -118,8 +117,5 @@ jobs:
             --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
             --context=${{ inputs.context || env.CONTEXT }}
-            --destination=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --registry-mirror=https://${{ env.REGISTRY }}
-            --registry-mirror-username=${{ secrets.DIGITAL_OCEAN_KEY }}
-            --registry-mirror-password=${{ secrets.DIGITAL_OCEAN_KEY }}
+            --destination=registry.digitalocean.com/lonius/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

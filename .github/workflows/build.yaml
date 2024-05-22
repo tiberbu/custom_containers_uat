@@ -71,6 +71,8 @@ on:
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
+  IMAGE_NAME: ${{ inputs.image }}
+  IMAGE_VERSION: ${{ inputs.version }}
 
 jobs:
   build:
@@ -81,8 +83,8 @@ jobs:
 
       - name: Clean Git Cache
         run: git clean -ffdx && git reset --hard
-
-      # The default disk size of these runners is ~14GB, this is not enough to run the e2e tests.
+		
+	  # The default disk size of these runners is ~14GB, this is not enough to run the e2e tests.
       # Cleanup the disk, see upstream discussion https://github.com/actions/runner-images/issues/2840.
       - name: Cleanup Disk Space
         run: |
@@ -107,19 +109,16 @@ jobs:
           echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
       
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
+          token: ${{ secrets.DIGITAL_OCEAN_KEY }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        run: |
-          aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 813389018368.dkr.ecr.eu-west-1.amazonaws.com
+      - name: Log in to DigitalOcean Container Registry with short-lived credentials
+        run: doctl registry login --expiry-seconds 1200
       
-      - uses: int128/kaniko-action@v1
+      - name: Build and push Docker image with Kaniko
+        uses: int128/kaniko-action@v1
         with:
           push: true
           cache: false
@@ -130,5 +129,5 @@ jobs:
             --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
             --context=${{ inputs.context || env.CONTEXT }}
-            --destination=813389018368.dkr.ecr.eu-west-1.amazonaws.com/${{ inputs.image || env.IMAGE }}:${{ inputs.version || env.VERSION }}
+            --destination=registry.digitalocean.com/lonius/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

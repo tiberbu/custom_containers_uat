@@ -96,10 +96,10 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           echo "After removing files:"
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v3
         with:
-          python-version: "3.10"
+          python-version: ${{ inputs.py-version || env.PY_VERSION }}
           cache: "pip"
           
       - name: Run Python Script to Update JSON

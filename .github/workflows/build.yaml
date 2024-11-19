@@ -96,16 +96,16 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           echo "After removing files:"
 
+      - name: Hack setup-python cache
+        if: hashFiles('**/requirements.txt', '**/pyproject.toml') == ''
+        run: |
+          touch ./requirements.txt
+
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
           python-version: ${{ inputs.py-version || env.PY_VERSION }}
           cache: "pip"
-
-      - name: Hack setup-python cache
-        if: hashFiles('**/requirements.txt', '**/pyproject.toml') == ''
-        run: |
-          touch ./requirements.txt
         
       - name: Run Python Script to Update JSON
         env:

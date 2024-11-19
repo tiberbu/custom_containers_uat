@@ -101,7 +101,12 @@ jobs:
         with:
           python-version: ${{ inputs.py-version || env.PY_VERSION }}
           cache: "pip"
-          
+
+      - name: Hack setup-python cache
+        if: hashFiles('**/requirements.txt', '**/pyproject.toml') == ''
+        run: |
+          touch ./requirements.txt
+        
       - name: Run Python Script to Update JSON
         env:
           TOKEN: ${{ secrets.TOKEN }}

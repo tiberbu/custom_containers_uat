@@ -101,8 +101,6 @@ jobs:
         with:
           python-version: "3.10"
           cache: "pip"
-        env:
-          AGENT_TOOLSDIRECTORY: /opt/hostedtoolcache
           
       - name: Run Python Script to Update JSON
         env:

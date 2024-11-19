@@ -76,7 +76,7 @@ env:
 
 jobs:
   build:
-    runs-on: self-hosted #ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,17 +95,6 @@ jobs:
           sudo rm -rf "/usr/local/share/boost"
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           echo "After removing files:"
-
-      - name: Hack setup-python cache
-        if: hashFiles('**/requirements.txt', '**/pyproject.toml') == ''
-        run: |
-          touch ./requirements.txt
-
-      - name: Set up Python
-        uses: actions/setup-python@v3
-        with:
-          python-version: ${{ inputs.py-version || env.PY_VERSION }}
-          cache: "pip"
         
       - name: Run Python Script to Update JSON
         env:

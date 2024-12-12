@@ -76,7 +76,7 @@ env:
 
 jobs:
   build:
-    runs-on: tiberbu2 #ubuntu-latest
+    runs-on: ubuntu-latest #tiberbu2 #ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4

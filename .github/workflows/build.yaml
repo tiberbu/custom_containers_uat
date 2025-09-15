@@ -1,13 +1,10 @@
 name: Build Image
 
-  
 on:
   push:
     branches:
       - master
-
   repository_dispatch:
-
   workflow_dispatch:
     inputs:
       image:
@@ -40,12 +37,10 @@ on:
       registry-user:
         description: user name
         required: false
-
     secrets:
       REGISTRY_PASSWORD:
         description: registry password
         required: false
-    
   workflow_call:
     inputs:
       repo:
@@ -67,35 +62,24 @@ on:
         required: true
         type: string
         description: NodeJS Version
-    
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
   IMAGE_NAME: ${{ inputs.image }}
   IMAGE_VERSION: ${{ inputs.version }}
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
 
 jobs:
   build:
-    runs-on: ubuntu-latest #tiberbu2 #ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Clean Git Cache
         run: git clean -ffdx && git reset --hard
-        
-      ## The default disk size of these runners is ~14GB, this is not enough to run the e2e tests.
-      ## Cleanup the disk, see upstream discussion https://github.com/actions/runner-images/issues/2840.
-      #- name: Cleanup Disk Space
-      #  run: |
-      #    echo "Before removing files:"
-      #    df -h
-      #    sudo rm -rf /usr/share/dotnet
-      #    sudo rm -rf /opt/ghc
-      #    sudo rm -rf "/usr/local/share/boost"
-      #    sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-      #    echo "After removing files:"
-        
+
       - name: Run Python Script to Update JSON
         env:
           TOKEN: ${{ secrets.TOKEN }}
@@ -108,15 +92,34 @@ jobs:
           cat ./ci/build.env >> $GITHUB_ENV
           echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
-      
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITAL_OCEAN_KEY }}
 
-      - name: Log in to DigitalOcean Container Registry with short-lived credentials
-        run: doctl registry login --expiry-seconds 2400
-      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # NEW: ensure the ECR repo exists
+      - name: Ensure ECR repository exists
+        run: |
+          set -e
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$IMAGE_NAME" \
+              --region "$AWS_REGION" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            echo "Created ECR repository: $IMAGE_NAME"
+          else
+            echo "ECR repository already exists: $IMAGE_NAME"
+          fi
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
       - name: Build and push Docker image with Kaniko
         uses: int128/kaniko-action@v1
         with:
@@ -129,5 +132,5 @@ jobs:
             --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
             --context=${{ inputs.context || env.CONTEXT }}
-            --destination=registry.digitalocean.com/lonius/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+            --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

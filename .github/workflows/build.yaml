@@ -2,53 +2,46 @@ name: Build Image
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - master
   repository_dispatch:
   workflow_dispatch:
     inputs:
       image:
         description: Image name
         type: string
-        required: false
       version:
         description: Image version tag
         type: string
-        required: false
       frappe-repo:
         description: Frappe repo
         type: string
-        required: false
       frappe-version:
         description: Frappe branch
         type: string
-        required: false
       py-version:
         description: Python version
         type: string
-        required: false
       nodejs-version:
         description: NodeJS version
         type: string
-        required: false
       apps-json-base64:
         description: base64 encoded string of apps.json
         type: string
-        required: false
       context:
         description: kaniko context
         type: string
-        required: false
       dockerfile:
         description: dockerfile path from context
         type: string
-        required: false
       registry-user:
         description: user name
-        type: string
         required: false
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
+  IMAGE_NAME: ${{ inputs.image }}
+  IMAGE_VERSION: ${{ inputs.version }}
   AWS_REGION: me-central-1
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.me-central-1.amazonaws.com
 
@@ -67,29 +60,14 @@ jobs:
           TOKEN: ${{ secrets.TOKEN }}
         run: python ci/script.py
 
-      - name: Resolve workflow_dispatch inputs
+      # Load repo defaults (fallbacks). Inputs will still win in Kaniko args.
+      - name: Source Build Env
         run: |
-          echo "IMAGE_NAME=${{ github.event.inputs.image || 'unset-image' }}" >> $GITHUB_ENV
-          echo "IMAGE_VERSION=${{ github.event.inputs.version || 'latest' }}" >> $GITHUB_ENV
-          echo "FRAPPE_REPO=${{ github.event.inputs['frappe-repo'] || '' }}" >> $GITHUB_ENV
-          echo "FRAPPE_VERSION=${{ github.event.inputs['frappe-version'] || '' }}" >> $GITHUB_ENV
-          echo "PY_VERSION=${{ github.event.inputs['py-version'] || '' }}" >> $GITHUB_ENV
-          echo "NODEJS_VERSION=${{ github.event.inputs['nodejs-version'] || '' }}" >> $GITHUB_ENV
-          echo "CONTEXT=${{ github.event.inputs.context || '.' }}" >> $GITHUB_ENV
-          echo "DOCKERFILE=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> $GITHUB_ENV
-          echo "REGISTRY_USER=${{ github.event.inputs['registry-user'] || 'AWS' }}" >> $GITHUB_ENV
-          echo "APPS_JSON_BASE64_IN=${{ github.event.inputs['apps-json-base64'] || '' }}" >> $GITHUB_ENV
+          [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
+          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
+          [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
 
-      - name: Source Build Env (optional files)
-        run: |
-          [ -f ./ci/build.env ] && cat ./ci/build.env >> "$GITHUB_ENV"
-          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> "$GITHUB_ENV"
-          if [ -f ./ci/apps.json ]; then
-            echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> "$GITHUB_ENV"
-          fi
-          if [ -n "${APPS_JSON_BASE64_IN}" ]; then
-            echo "APPS_JSON_BASE64=${APPS_JSON_BASE64_IN}" >> $GITHUB_ENV
-          fi
+      # --- ECR auth & push ---
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -115,7 +93,7 @@ jobs:
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
-            | docker login --username "${REGISTRY_USER}" --password-stdin "$ECR_REGISTRY"
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
       - name: Build and push Docker image with Kaniko
         uses: int128/kaniko-action@v1
@@ -123,12 +101,11 @@ jobs:
           push: true
           cache: false
           kaniko-args: |
-            --build-arg=FRAPPE_PATH=${{ env.FRAPPE_REPO }}
-            --build-arg=FRAPPE_BRANCH=${{ env.FRAPPE_VERSION }}
-            --build-arg=PYTHON_VERSION=${{ env.PY_VERSION }}
-            --build-arg=NODE_VERSION=${{ env.NODEJS_VERSION }}
-            --build-arg=APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
-            --context=${{ env.CONTEXT }}
+            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
+            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
+            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
+            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
+            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
+            --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --dockerfile=${{ env.DOCKERFILE }}
-
+            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

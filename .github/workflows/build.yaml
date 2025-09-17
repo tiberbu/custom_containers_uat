@@ -2,7 +2,7 @@ name: Build Image
 
 on:
   push:
-    branches: [ main, master ]   # so pushes to main also trigger
+    branches: [ main, master ]
   repository_dispatch:
   workflow_dispatch:
     inputs:
@@ -46,12 +46,11 @@ on:
         description: user name
         type: string
         required: false
-# ⛔ REMOVE the 'secrets:' block under workflow_dispatch (invalid)
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
-  AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+  AWS_REGION: me-central-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.me-central-1.amazonaws.com
 
 jobs:
   build:
@@ -68,9 +67,7 @@ jobs:
           TOKEN: ${{ secrets.TOKEN }}
         run: python ci/script.py
 
-      # Normalize inputs for all triggers & write to $GITHUB_ENV
-      - name: Resolve inputs
-        shell: bash
+      - name: Resolve workflow_dispatch inputs
         run: |
           echo "IMAGE_NAME=${{ github.event.inputs.image || 'unset-image' }}" >> $GITHUB_ENV
           echo "IMAGE_VERSION=${{ github.event.inputs.version || 'latest' }}" >> $GITHUB_ENV
@@ -84,7 +81,6 @@ jobs:
           echo "APPS_JSON_BASE64_IN=${{ github.event.inputs['apps-json-base64'] || '' }}" >> $GITHUB_ENV
 
       - name: Source Build Env (optional files)
-        shell: bash
         run: |
           [ -f ./ci/build.env ] && cat ./ci/build.env >> "$GITHUB_ENV"
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> "$GITHUB_ENV"
@@ -92,7 +88,7 @@ jobs:
             echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> "$GITHUB_ENV"
           fi
           if [ -n "${APPS_JSON_BASE64_IN}" ]; then
-            echo "APPS_JSON_BASE64=${APPS_JSON_BASE64_IN}" >> "$GITHUB_ENV"
+            echo "APPS_JSON_BASE64=${APPS_JSON_BASE64_IN}" >> $GITHUB_ENV
           fi
 
       - name: Configure AWS credentials
@@ -135,3 +131,4 @@ jobs:
             --context=${{ env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ env.DOCKERFILE }}
+

@@ -2,71 +2,54 @@ name: Build Image
 
 on:
   push:
-    branches:
-      - master
+    branches: [ main, master ]   # so pushes to main also trigger
   repository_dispatch:
   workflow_dispatch:
     inputs:
       image:
         description: Image name
         type: string
+        required: false
       version:
         description: Image version tag
         type: string
+        required: false
       frappe-repo:
         description: Frappe repo
         type: string
+        required: false
       frappe-version:
         description: Frappe branch
         type: string
+        required: false
       py-version:
         description: Python version
         type: string
+        required: false
       nodejs-version:
         description: NodeJS version
         type: string
+        required: false
       apps-json-base64:
         description: base64 encoded string of apps.json
         type: string
+        required: false
       context:
         description: kaniko context
         type: string
+        required: false
       dockerfile:
         description: dockerfile path from context
         type: string
+        required: false
       registry-user:
         description: user name
+        type: string
         required: false
-    secrets:
-      REGISTRY_PASSWORD:
-        description: registry password
-        required: false
-  workflow_call:
-    inputs:
-      repo:
-        required: true
-        type: string
-        description: "'erpnext' or 'frappe'"
-      version:
-        required: true
-        type: string
-        description: "Major version, git tags should match 'v{version}.*'; or 'develop'"
-      push:
-        required: true
-        type: boolean
-      python_version:
-        required: true
-        type: string
-        description: Python Version
-      node_version:
-        required: true
-        type: string
-        description: NodeJS Version
+# ⛔ REMOVE the 'secrets:' block under workflow_dispatch (invalid)
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
-  IMAGE_NAME: ${{ inputs.image }}
-  IMAGE_VERSION: ${{ inputs.version }}
   AWS_REGION: us-east-1
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
 
@@ -83,15 +66,34 @@ jobs:
       - name: Run Python Script to Update JSON
         env:
           TOKEN: ${{ secrets.TOKEN }}
-        run: |
-          python ci/script.py
+        run: python ci/script.py
 
-      - name: Source Build Env
-        id: source-build-env
+      # Normalize inputs for all triggers & write to $GITHUB_ENV
+      - name: Resolve inputs
+        shell: bash
         run: |
-          cat ./ci/build.env >> $GITHUB_ENV
-          echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
-          echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ github.event.inputs.image || 'unset-image' }}" >> $GITHUB_ENV
+          echo "IMAGE_VERSION=${{ github.event.inputs.version || 'latest' }}" >> $GITHUB_ENV
+          echo "FRAPPE_REPO=${{ github.event.inputs['frappe-repo'] || '' }}" >> $GITHUB_ENV
+          echo "FRAPPE_VERSION=${{ github.event.inputs['frappe-version'] || '' }}" >> $GITHUB_ENV
+          echo "PY_VERSION=${{ github.event.inputs['py-version'] || '' }}" >> $GITHUB_ENV
+          echo "NODEJS_VERSION=${{ github.event.inputs['nodejs-version'] || '' }}" >> $GITHUB_ENV
+          echo "CONTEXT=${{ github.event.inputs.context || '.' }}" >> $GITHUB_ENV
+          echo "DOCKERFILE=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> $GITHUB_ENV
+          echo "REGISTRY_USER=${{ github.event.inputs['registry-user'] || 'AWS' }}" >> $GITHUB_ENV
+          echo "APPS_JSON_BASE64_IN=${{ github.event.inputs['apps-json-base64'] || '' }}" >> $GITHUB_ENV
+
+      - name: Source Build Env (optional files)
+        shell: bash
+        run: |
+          [ -f ./ci/build.env ] && cat ./ci/build.env >> "$GITHUB_ENV"
+          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> "$GITHUB_ENV"
+          if [ -f ./ci/apps.json ]; then
+            echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${APPS_JSON_BASE64_IN}" ]; then
+            echo "APPS_JSON_BASE64=${APPS_JSON_BASE64_IN}" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -100,7 +102,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # NEW: ensure the ECR repo exists
       - name: Ensure ECR repository exists
         run: |
           set -e
@@ -118,7 +119,7 @@ jobs:
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
-            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            | docker login --username "${REGISTRY_USER}" --password-stdin "$ECR_REGISTRY"
 
       - name: Build and push Docker image with Kaniko
         uses: int128/kaniko-action@v1
@@ -126,11 +127,11 @@ jobs:
           push: true
           cache: false
           kaniko-args: |
-            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
-            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
-            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
-            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
-            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-            --context=${{ inputs.context || env.CONTEXT }}
+            --build-arg=FRAPPE_PATH=${{ env.FRAPPE_REPO }}
+            --build-arg=FRAPPE_BRANCH=${{ env.FRAPPE_VERSION }}
+            --build-arg=PYTHON_VERSION=${{ env.PY_VERSION }}
+            --build-arg=NODE_VERSION=${{ env.NODEJS_VERSION }}
+            --build-arg=APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
+            --context=${{ env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
+            --dockerfile=${{ env.DOCKERFILE }}

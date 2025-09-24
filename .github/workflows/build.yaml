@@ -3,7 +3,10 @@ name: Build Image
 on:
   push:
     branches:
+      - main
+      - develop
       - master
+      - stagging
   repository_dispatch:
   workflow_dispatch:
     inputs:

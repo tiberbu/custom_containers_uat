@@ -113,6 +113,17 @@ jobs:
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
 
+      - name: Trivy Image Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}'
+          # scan-type: fs
+          format: 'table'
+          exit-code: 1
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+        continue-on-error: true
+
       - name: Inspector Scan
         id: inspector
         uses: aws-actions/vulnerability-scan-github-action-for-amazon-inspector@v1
@@ -138,7 +149,7 @@ jobs:
            # output flag to 1.
            critical_threshold: 1
            high_threshold: 1
-           medium_threshold: 1
+           medium_threshold: 0
 
            # Additional input arguments are available to control scan behavior.
            # See 'action.yml' for additional input/output options.

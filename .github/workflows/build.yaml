@@ -1,4 +1,5 @@
 name: Build & Push Multi-Arch Image (amd64 + arm64)
+
 on:
   push:
     branches:
@@ -7,11 +8,11 @@ on:
     inputs:
       image:
         description: "Image name (ECR repository name)"
-        required: true
+        required: false
         default: "my-app"
       version:
         description: "Image tag"
-        required: true
+        required: false
         default: "latest"
       context:
         description: "Build context (path)"
@@ -39,12 +40,8 @@ on:
         required: false
 
 env:
-  # Adjust AWS region if needed
+  # change this to your target region if needed
   AWS_REGION: me-central-1
-  # ECR registry will be computed from AWS_ACCOUNT_ID secret below
-  # Make sure you set secrets.AWS_ACCOUNT_ID and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-  # in your repo or org secrets.
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
 
 permissions:
   contents: read
@@ -56,6 +53,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set image variables
+        # This step centralizes input/env handling so subsequent steps can use env vars reliably.
+        run: |
+          # Accept inputs from workflow_dispatch (github.event.inputs.*) or fall back to defaults
+          echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> "$GITHUB_ENV"
+          echo "IMAGE_VERSION=${{ github.event.inputs.version || 'latest' }}" >> "$GITHUB_ENV"
+          echo "CONTEXT_PATH=${{ github.event.inputs.context || '.' }}" >> "$GITHUB_ENV"
+          echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> "$GITHUB_ENV"
+          # pass optional build args into env for use in build step
+          echo "FRAPPE_REPO=${{ github.event.inputs.FRAPPE_REPO || '' }}" >> "$GITHUB_ENV"
+          echo "FRAPPE_BRANCH=${{ github.event.inputs.FRAPPE_BRANCH || '' }}" >> "$GITHUB_ENV"
+          echo "PYTHON_VERSION=${{ github.event.inputs.PY_VERSION || '' }}" >> "$GITHUB_ENV"
+          echo "NODE_VERSION=${{ github.event.inputs.NODE_VERSION || '' }}" >> "$GITHUB_ENV"
+          echo "APPS_JSON_BASE64=${{ github.event.inputs.APPS_JSON_BASE64 || '' }}" >> "$GITHUB_ENV"
+          # Build full ECR registry from secret and region
+          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> "$GITHUB_ENV"
+        shell: bash
 
       - name: Set up QEMU (for cross-platform builds)
         uses: tonistiigi/setup-qemu-action@v2
@@ -80,7 +95,6 @@ jobs:
       - name: Ensure ECR repository exists
         run: |
           set -e
-          IMAGE_NAME="${{ github.event.inputs.image || github.inputs.image || 'my-app' }}"
           aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" \
             --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
@@ -88,29 +102,24 @@ jobs:
       - name: Build and push multi-arch image (amd64 + arm64)
         uses: docker/build-push-action@v5
         with:
-          context: ${{ github.event.inputs.context || github.inputs.context || '.' }}
-          file: ${{ github.event.inputs.dockerfile || github.inputs.dockerfile || 'Dockerfile' }}
+          context: ${{ env.CONTEXT_PATH }}
+          file: ${{ env.DOCKERFILE_PATH }}
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ env.ECR_REGISTRY }}/${{ github.event.inputs.image || github.inputs.image || 'my-app' }}:${{ github.event.inputs.version || github.inputs.version || 'latest' }}
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           build-args: |
-            FRAPPE_REPO=${{ github.event.inputs.FRAPPE_REPO || github.inputs.FRAPPE_REPO || '' }}
-            FRAPPE_BRANCH=${{ github.event.inputs.FRAPPE_BRANCH || github.inputs.FRAPPE_BRANCH || '' }}
-            PYTHON_VERSION=${{ github.event.inputs.PY_VERSION || github.inputs.PY_VERSION || '' }}
-            NODE_VERSION=${{ github.event.inputs.NODE_VERSION || github.inputs.NODE_VERSION || '' }}
-            APPS_JSON_BASE64=${{ github.event.inputs.APPS_JSON_BASE64 || github.inputs.APPS_JSON_BASE64 || '' }}
-          # Optional: enable buildkit cache for faster incremental builds (requires additional setup)
-          # cache-from: type=gha,scope=your-repo/your-image
-          # cache-to: type=gha,mode=max,scope=your-repo/your-image
+            FRAPPE_REPO=${{ env.FRAPPE_REPO }}
+            FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
 
       - name: Verify pushed image supports amd64 and arm64
         run: |
-          IMAGE="${{ env.ECR_REGISTRY }}/${{ github.event.inputs.image || github.inputs.image || 'my-app' }}:${{ github.event.inputs.version || github.inputs.version || 'latest' }}"
+          IMAGE="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}"
           echo "Inspecting image manifest for: $IMAGE"
-          # imagetools is part of buildx; imagetools inspect prints platforms in manifest list
           docker buildx imagetools inspect --raw "$IMAGE" > manifest.json
           echo "Manifest saved to manifest.json"
-          # Quick check for platform entries
           if grep -q '"architecture": "amd64"' manifest.json && grep -q '"architecture": "arm64"' manifest.json; then
             echo "SUCCESS: manifest contains both amd64 and arm64"
           else
@@ -119,8 +128,7 @@ jobs:
             exit 2
           fi
 
-      - name: Output pushed image (for later jobs)
-        id: image
+      - name: Set output image
+        id: set-output
         run: |
-          echo "::set-output name=full_image::${{ env.ECR_REGISTRY }}/${{ github.event.inputs.image || github.inputs.image || 'my-app' }}:${{ github.event.inputs.version || github.inputs.version || 'latest' }}"
-
+          echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" >> $GITHUB_OUTPUT

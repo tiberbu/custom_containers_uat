@@ -1,5 +1,4 @@
-
-name: Build Image
+name: Build Image (multi-arch)
 
 on:
   push:
@@ -30,7 +29,7 @@ on:
         description: base64 encoded string of apps.json
         type: string
       context:
-        description: kaniko context
+        description: kaniko/buildx context
         type: string
       dockerfile:
         description: dockerfile path from context
@@ -41,10 +40,8 @@ on:
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
-  IMAGE_NAME: ${{ inputs.image }}
-  IMAGE_VERSION: ${{ inputs.version }}
   AWS_REGION: me-central-1
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.me-central-1.amazonaws.com
+  # do not try to use env.AWS_REGION inside top-level env expressions to construct ECR - we construct it later
 
 jobs:
   build:
@@ -61,13 +58,28 @@ jobs:
           TOKEN: ${{ secrets.TOKEN }}
         run: python ci/script.py
 
-      # Load repo defaults (fallbacks). Inputs will still win in Kaniko args.
-      - name: Source Build Env
+      - name: Source Build Env (fallbacks)
         run: |
           [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
-      # --- ECR auth & push ---
+
+      # Prepare computed environment variables for later actions
+      - name: Prepare image/env variables
+        run: |
+          echo "IMAGE_NAME=${{ github.event.inputs.image || env.IMAGE_NAME || 'my-app' }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ github.event.inputs.version || env.IMAGE_VERSION || 'latest' }}" >> "$GITHUB_ENV"
+          echo "CONTEXT=${{ github.event.inputs.context || '.' }}" >> "$GITHUB_ENV"
+          echo "DOCKERFILE=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> "$GITHUB_ENV"
+          # pass optional build args into env
+          echo "FRAPPE_REPO=${{ github.event.inputs['frappe-repo'] || env.FRAPPE_REPO || '' }}" >> "$GITHUB_ENV"
+          echo "FRAPPE_BRANCH=${{ github.event.inputs['frappe-version'] || env.FRAPPE_BRANCH || '' }}" >> "$GITHUB_ENV"
+          echo "PY_VERSION=${{ github.event.inputs['py-version'] || env.PY_VERSION || '' }}" >> "$GITHUB_ENV"
+          echo "NODE_VERSION=${{ github.event.inputs['nodejs-version'] || env.NODE_VERSION || '' }}" >> "$GITHUB_ENV"
+          echo "APPS_JSON_BASE64=${{ github.event.inputs['apps-json-base64'] || env.APPS_JSON_BASE64 || '' }}" >> "$GITHUB_ENV"
+          # Build ECR registry from secret + region (do this at runtime)
+          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> "$GITHUB_ENV"
+        shell: bash
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -89,21 +101,41 @@ jobs:
           else
             echo "ECR repository already exists: $IMAGE_NAME"
           fi
+
       - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region "$AWS_REGION" \
-            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-      - name: Build and push Docker image with Kaniko
-        uses: int128/kaniko-action@v1
+        uses: aws-actions/amazon-ecr-login@v1
         with:
+          registry: ${{ env.ECR_REGISTRY }}
+
+      # Buildx: set up builder (install true will ensure QEMU is present on hosted runners)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Build and push multi-arch image (amd64 + arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
           push: true
-          cache: false
-          kaniko-args: |
-            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
-            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
-            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
-            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
-            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-            --context=${{ inputs.context || env.CONTEXT }}
-            --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            FRAPPE_PATH=${{ env.FRAPPE_REPO }}
+            FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}
+            PYTHON_VERSION=${{ env.PY_VERSION }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
+
+      - name: Verify manifest contains amd64 and arm64
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json
+          if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
+            echo "OK: manifest contains amd64 & arm64"
+          else
+            echo "ERROR: manifest missing expected platforms"
+            cat /tmp/manifest.json
+            exit 1
+          fi

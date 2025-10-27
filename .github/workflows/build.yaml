@@ -1,77 +1,75 @@
-name: Build Image (multi-arch)
+name: Build & Push Docker Image (amd64)
 
 on:
   push:
     branches:
-      - master
-  repository_dispatch:
+      - main   # or 'master' if your repo uses master
   workflow_dispatch:
     inputs:
       image:
-        description: Image name
+        description: "Image name"
         type: string
+        default: "my-app"
       version:
-        description: Image version tag
+        description: "Image version tag"
         type: string
+        default: "latest"
       frappe-repo:
-        description: Frappe repo
+        description: "Frappe repo"
         type: string
+        default: ""
       frappe-version:
-        description: Frappe branch
+        description: "Frappe branch"
         type: string
+        default: "version-15"
       py-version:
-        description: Python version
+        description: "Python version"
         type: string
+        default: "3.11.6"
       nodejs-version:
-        description: NodeJS version
+        description: "NodeJS version"
         type: string
+        default: "18.17.0"
       apps-json-base64:
-        description: base64 encoded string of apps.json
+        description: "Base64 encoded apps.json"
         type: string
+        default: ""
       context:
-        description: docker build context (ignored; we use local checkout of frappe_docker)
+        description: "Docker build context"
         type: string
-        required: false
+        default: "."
       dockerfile:
-        description: dockerfile path (ignored; we use frappe_docker/images/custom/Containerfile)
+        description: "Dockerfile path"
         type: string
-        required: false
-      registry-user:
-        description: user name
-        required: false
-        type: string
+        default: "Dockerfile"
 
 env:
-  TOKEN: ${{ secrets.TOKEN }}
-  IMAGE_NAME: ${{ inputs.image }}
-  IMAGE_VERSION: ${{ inputs.version }}
   AWS_REGION: me-central-1
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.me-central-1.amazonaws.com
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      # Your workflow repo (holds ci/script.py, env files, etc.)
-      - name: Checkout (workflow repo)
+      # Checkout the repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Clean Git Cache
-        run: git clean -ffdx && git reset --hard
-
-      - name: Run Python Script to Update JSON
-        env:
-          TOKEN: ${{ secrets.TOKEN }}
-        run: python ci/script.py
-
-      # Load defaults/fallbacks from your repo
-      - name: Source Build Env
+      # Prepare environment variables from inputs
+      - name: Set up environment variables
         run: |
-          [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
-          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
-          [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ github.event.inputs.image }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          echo "CONTEXT_PATH=${{ github.event.inputs.context }}" >> $GITHUB_ENV
+          echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile }}" >> $GITHUB_ENV
+          echo "FRAPPE_REPO=${{ github.event.inputs.frappe-repo }}" >> $GITHUB_ENV
+          echo "FRAPPE_BRANCH=${{ github.event.inputs.frappe-version }}" >> $GITHUB_ENV
+          echo "PYTHON_VERSION=${{ github.event.inputs.py-version }}" >> $GITHUB_ENV
+          echo "NODE_VERSION=${{ github.event.inputs.nodejs-version }}" >> $GITHUB_ENV
+          echo "APPS_JSON_BASE64=${{ github.event.inputs.apps-json-base64 }}" >> $GITHUB_ENV
 
-      # AWS & ECR auth/push
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -79,13 +77,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # Ensure the ECR repository exists
       - name: Ensure ECR repository exists
         run: |
           set -e
-          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" >/dev/null 2>&1; then
             aws ecr create-repository \
               --repository-name "$IMAGE_NAME" \
-              --region "$AWS_REGION" \
               --image-scanning-configuration scanOnPush=true \
               --encryption-configuration encryptionType=AES256
             echo "Created ECR repository: $IMAGE_NAME"
@@ -93,66 +91,34 @@ jobs:
             echo "ECR repository already exists: $IMAGE_NAME"
           fi
 
+      # Login to Amazon ECR
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-      # Pull the Docker build context repo we actually want to build (frappe_docker)
-      - name: Checkout frappe_docker (build context)
-        uses: actions/checkout@v4
-        with:
-          repository: frappe/frappe_docker
-          ref: main
-          path: frappe_docker
-
-      # Install QEMU (alternate action) so cross-arch emulation is available
-      - name: Set up QEMU for cross-platform emulation
-        uses: crazy-max/ghaction-setup-qemu@v2
-
-      # Set up a containerized buildx builder (recommended for multi-arch)
-      - name: Set up Docker Buildx (docker-container driver)
+      # Set up Docker Buildx (default driver, no QEMU)
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          install: true
-          driver-opts: |
-            image=moby/buildkit:master
-          buildkitd-flags: --allow-insecure-entitlement network.host --allow-insecure-entitlement security.insecure
 
-      - name: Verify Buildx
-        run: |
-          docker buildx ls
-          # list builders to ensure the container builder is running
-          docker buildx inspect --bootstrap
-
-      # Build and push multi-arch image
-      - name: Build and push Docker image to ECR (multi-arch)
+      # Build and push Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          builder: ${{ steps.setup-buildx.outputs.name || '' }}
-          context: ./frappe_docker
-          file: ./frappe_docker/images/custom/Containerfile
+          context: ${{ env.CONTEXT_PATH }}
+          file: ${{ env.DOCKERFILE_PATH }}
           push: true
-          platforms: linux/amd64,linux/arm64
-          provenance: false
+          platforms: linux/amd64
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           build-args: |
-            FRAPPE_PATH=${{ inputs['frappe-repo'] || env.FRAPPE_REPO }}
-            FRAPPE_BRANCH=${{ inputs['frappe-version'] || env.FRAPPE_BRANCH }}
-            PYTHON_VERSION=${{ inputs['py-version'] || env.PY_VERSION }}
-            NODE_VERSION=${{ inputs['nodejs-version'] || env.NODE_VERSION }}
-            APPS_JSON_BASE64=${{ inputs['apps-json-base64'] || env.APPS_JSON_BASE64 }}
-          tags: |
-            ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+            FRAPPE_REPO=${{ env.FRAPPE_REPO }}
+            FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
 
-      - name: Verify manifest contains amd64 and arm64
+      # Optional: inspect the image manifest
+      - name: Inspect pushed image
         run: |
-          IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-          docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json
-          if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
-            echo "OK: manifest contains amd64 & arm64"
-          else
-            echo "ERROR: manifest missing expected platforms"
-            cat /tmp/manifest.json
-            exit 1
-          fi
+          IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker inspect "$IMAGE"

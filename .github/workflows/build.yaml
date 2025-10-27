@@ -1,12 +1,14 @@
+# .github/workflows/build-multiarch.yml
 name: Build & Push Multi-Arch Image (buildx)
 
 on:
   push:
-    branches: [ master ]    # change to main if needed
+    branches:
+      - master    # change to 'main' if your default branch is main
   workflow_dispatch:
     inputs:
       image:
-        description: "ECR repo name"
+        description: "ECR repository name"
         required: false
         default: "my-app"
       tag:
@@ -14,35 +16,65 @@ on:
         required: false
         default: "latest"
       context:
-        description: "Build context"
+        description: "Build context path"
         required: false
         default: "."
       dockerfile:
-        description: "Dockerfile path"
+        description: "Dockerfile path (relative to context)"
         required: false
         default: "Dockerfile"
+      # optional build-args (exposed as inputs for manual dispatch)
+      FRAPPE_REPO:
+        description: "FRAPPE_REPO build-arg (optional)"
+        required: false
+      FRAPPE_BRANCH:
+        description: "FRAPPE_BRANCH build-arg (optional)"
+        required: false
+      PYTHON_VERSION:
+        description: "PYTHON_VERSION build-arg (optional)"
+        required: false
+      NODE_VERSION:
+        description: "NODE_VERSION build-arg (optional)"
+        required: false
+      APPS_JSON_BASE64:
+        description: "APPS_JSON_BASE64 build-arg (optional)"
+        required: false
+
+# Simple environment values allowed at top-level (no references to env.* here)
+env:
+  AWS_REGION: me-central-1
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build & Push Multi-Arch
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: me-central-1   # change if needed
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare variables
+      - name: Prepare runtime environment variables
+        # Create env vars (ECR_REGISTRY, IMAGE_NAME, IMAGE_TAG, etc.) for following steps
         run: |
-          echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> $GITHUB_ENV
-          echo "IMAGE_TAG=${{ github.event.inputs.tag  || 'latest' }}" >> $GITHUB_ENV
-          echo "CONTEXT_PATH=${{ github.event.inputs.context || '.' }}" >> $GITHUB_ENV
-          echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> $GITHUB_ENV
-          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ github.event.inputs.tag || 'latest' }}" >> "$GITHUB_ENV"
+          echo "CONTEXT_PATH=${{ github.event.inputs.context || '.' }}" >> "$GITHUB_ENV"
+          echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> "$GITHUB_ENV"
+          # optional build args passed through inputs (may be empty)
+          echo "FRAPPE_REPO=${{ github.event.inputs.FRAPPE_REPO || '' }}" >> "$GITHUB_ENV"
+          echo "FRAPPE_BRANCH=${{ github.event.inputs.FRAPPE_BRANCH || '' }}" >> "$GITHUB_ENV"
+          echo "PYTHON_VERSION=${{ github.event.inputs.PYTHON_VERSION || '' }}" >> "$GITHUB_ENV"
+          echo "NODE_VERSION=${{ github.event.inputs.NODE_VERSION || '' }}" >> "$GITHUB_ENV"
+          echo "APPS_JSON_BASE64=${{ github.event.inputs.APPS_JSON_BASE64 || '' }}" >> "$GITHUB_ENV"
+          # build ECR registry from secret + region
+          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> "$GITHUB_ENV"
+        shell: bash
 
-      - name: Set up QEMU
+      - name: Set up QEMU (for cross-platform builds)
         uses: tonistiigi/setup-qemu-action@v2
 
       - name: Set up Docker Buildx
@@ -57,18 +89,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to ECR
+      - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
         with:
           registry: ${{ env.ECR_REGISTRY }}
 
-      - name: Ensure ECR repo exists
+      - name: Ensure ECR repository exists
         run: |
           set -e
           aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" --image-scanning-configuration scanOnPush=true
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push multi-arch image (amd64 + arm64)
         uses: docker/build-push-action@v5
         with:
           context: ${{ env.CONTEXT_PATH }}
@@ -76,20 +110,27 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            FRAPPE_REPO=${{ env.FRAPPE_REPO }}
+            FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
 
-      - name: Inspect manifest
+      - name: Inspect pushed image manifest
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json
-          echo "Saved manifest.json"
+          echo "Saved manifest to /tmp/manifest.json"
           if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
-            echo "OK: manifest contains amd64 and arm64"
+            echo "SUCCESS: manifest contains both amd64 and arm64"
           else
             echo "ERROR: manifest missing amd64/arm64"
             cat /tmp/manifest.json
             exit 1
           fi
 
-      - name: Set output
-        id: out
-        run: echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
+      - name: Output image reference
+        id: output
+        run: |
+          echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT

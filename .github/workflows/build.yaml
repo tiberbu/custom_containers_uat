@@ -3,53 +3,101 @@ name: Build & Push Multi-Arch Image
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
     inputs:
       image:
         description: Image name
-        required: true
-        default: my-app
+        type: string
       version:
         description: Image version tag
-        required: true
-        default: latest
+        type: string
       frappe-repo:
         description: Frappe repo URL
-        required: true
-        default: https://github.com/frappe/frappe
+        type: string
       frappe-version:
         description: Frappe branch
-        required: true
-        default: version-15
+        type: string
       py-version:
         description: Python version
-        required: true
-        default: 3.11.6
+        type: string
       nodejs-version:
         description: NodeJS version
-        required: true
-        default: 18.17.0
+        type: string
       apps-json-base64:
-        description: Base64-encoded apps.json
-        required: false
+        description: Base64 encoded apps.json
+        type: string
 
 env:
   AWS_REGION: me-central-1
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.me-central-1.amazonaws.com
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      # Checkout workflow repo
+      # Checkout the workflow repo
       - name: Checkout workflow repo
         uses: actions/checkout@v4
 
-      # Checkout frappe_docker repo for build context
+      # Clean git cache
+      - name: Clean Git Cache
+        run: git clean -ffdx && git reset --hard
+
+      # Run Python script to update apps.json
+      - name: Run Python Script
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+        run: python ci/script.py
+
+      # Source build defaults
+      - name: Load Build Env
+        run: |
+          [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
+          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
+          [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
+
+      # Set IMAGE_NAME and IMAGE_VERSION with fallback defaults
+      - name: Set Build Variables
+        run: |
+          echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.event.inputs.version || 'latest' }}" >> $GITHUB_ENV
+          echo "FRAPPE_REPO=${{ github.event.inputs.frappe-repo || env.FRAPPE_REPO }}" >> $GITHUB_ENV
+          echo "FRAPPE_BRANCH=${{ github.event.inputs.frappe-version || env.FRAPPE_VERSION }}" >> $GITHUB_ENV
+          echo "PYTHON_VERSION=${{ github.event.inputs.py-version || env.PY_VERSION }}" >> $GITHUB_ENV
+          echo "NODE_VERSION=${{ github.event.inputs.nodejs-version || env.NODEJS_VERSION }}" >> $GITHUB_ENV
+          echo "APPS_JSON_BASE64=${{ github.event.inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}" >> $GITHUB_ENV
+
+      # Configure AWS credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Ensure ECR repository exists
+      - name: Ensure ECR Repository Exists
+        run: |
+          set -e
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$IMAGE_NAME" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            echo "Created ECR repository: $IMAGE_NAME"
+          else
+            echo "ECR repository $IMAGE_NAME already exists"
+          fi
+
+      # Login to ECR
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      # Checkout frappe_docker as build context
       - name: Checkout frappe_docker
         uses: actions/checkout@v4
         with:
@@ -57,69 +105,39 @@ jobs:
           ref: main
           path: frappe_docker
 
-      # Configure AWS credentials
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Ensure ECR repository exists
-      - name: Ensure ECR repository exists
-        run: |
-          if ! aws ecr describe-repositories --repository-names "${{ github.event.inputs.image }}" >/dev/null 2>&1; then
-            aws ecr create-repository \
-              --repository-name "${{ github.event.inputs.image }}" \
-              --region "${{ env.AWS_REGION }}" \
-              --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256
-            echo "Created ECR repository"
-          else
-            echo "ECR repository already exists"
-          fi
-
-      # Login to ECR
-      - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
-
       # Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Build and push multi-arch image (amd64 + arm64)
-      - name: Build and push Docker image
+      # Build and push multi-arch image
+      - name: Build & Push Multi-Arch Image
         uses: docker/build-push-action@v6
         with:
-          context: ./frappe_docker/images/custom
+          context: ./frappe_docker
           file: ./frappe_docker/images/custom/Containerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ env.ECR_REGISTRY }}/${{ github.event.inputs.image }}:${{ github.event.inputs.version }}
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           build-args: |
-            FRAPPE_REPO=${{ github.event.inputs.frappe-repo }}
-            FRAPPE_BRANCH=${{ github.event.inputs.frappe-version }}
-            PYTHON_VERSION=${{ github.event.inputs.py-version }}
-            NODE_VERSION=${{ github.event.inputs.nodejs-version }}
-            APPS_JSON_BASE64=${{ github.event.inputs.apps-json-base64 || '' }}
+            FRAPPE_PATH=${{ env.FRAPPE_REPO }}
+            FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
+            NODE_VERSION=${{ env.NODE_VERSION }}
+            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
 
-      # Verify pushed multi-arch image
-      - name: Inspect pushed image manifest
+      # Inspect manifest
+      - name: Inspect Image Manifest
         run: |
-          IMAGE=${{ env.ECR_REGISTRY }}/${{ github.event.inputs.image }}:${{ github.event.inputs.version }}
+          IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json
-          echo "Saved manifest to /tmp/manifest.json"
           if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
-            echo "SUCCESS: manifest contains both amd64 and arm64"
+            echo "SUCCESS: manifest contains amd64 and arm64"
           else
             echo "ERROR: manifest missing amd64/arm64"
             cat /tmp/manifest.json
             exit 1
           fi
 
-      # Output full image reference
-      - name: Output image reference
+      - name: Output Image Reference
         id: output
-        run: |
-          echo "full_image=${{ env.ECR_REGISTRY }}/${{ github.event.inputs.image }}:${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        run: echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT

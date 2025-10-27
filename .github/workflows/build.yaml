@@ -1,16 +1,15 @@
-name: Build & Push Multi-Arch Image
+name: Build & Push Multi-Arch Image (buildx)
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]    # change to main if needed
   workflow_dispatch:
     inputs:
       image:
         description: "ECR repo name"
         required: false
         default: "my-app"
-      version:
+      tag:
         description: "Image tag"
         required: false
         default: "latest"
@@ -28,26 +27,25 @@ permissions:
 
 jobs:
   build:
-    name: Build and push multi-arch
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: me-central-1
+      AWS_REGION: me-central-1   # change if needed
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Prepare variables
         run: |
-          echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> "$GITHUB_ENV"
-          echo "IMAGE_TAG=${{ github.event.inputs.version || 'latest' }}" >> "$GITHUB_ENV"
-          echo "CONTEXT_PATH=${{ github.event.inputs.context || '.' }}" >> "$GITHUB_ENV"
-          echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> "$GITHUB_ENV"
-          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.event.inputs.tag  || 'latest' }}" >> $GITHUB_ENV
+          echo "CONTEXT_PATH=${{ github.event.inputs.context || '.' }}" >> $GITHUB_ENV
+          echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> $GITHUB_ENV
+          echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> $GITHUB_ENV
 
       - name: Set up QEMU
         uses: tonistiigi/setup-qemu-action@v2
 
-      - name: Set up buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           install: true
@@ -83,8 +81,9 @@ jobs:
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json
+          echo "Saved manifest.json"
           if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
-            echo "OK: image manifest contains amd64 and arm64"
+            echo "OK: manifest contains amd64 and arm64"
           else
             echo "ERROR: manifest missing amd64/arm64"
             cat /tmp/manifest.json
@@ -92,5 +91,5 @@ jobs:
           fi
 
       - name: Set output
-        id: output
+        id: out
         run: echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT

@@ -1,4 +1,4 @@
-name: Build & Push Multi-Arch Image (amd64 + arm64)
+name: Build & Push Multi-Arch Image
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: "Image name (ECR repository name)"
+        description: "ECR repo name"
         required: false
         default: "my-app"
       version:
@@ -15,67 +15,39 @@ on:
         required: false
         default: "latest"
       context:
-        description: "Build context (path)"
+        description: "Build context"
         required: false
         default: "."
       dockerfile:
-        description: "Dockerfile path (relative to context)"
+        description: "Dockerfile path"
         required: false
         default: "Dockerfile"
-      # example build args you may want to supply
-      FRAPPE_REPO:
-        description: "Frappe repo (example build-arg)"
-        required: false
-      FRAPPE_BRANCH:
-        description: "Frappe branch"
-        required: false
-      PY_VERSION:
-        description: "Python version"
-        required: false
-      NODE_VERSION:
-        description: "Node version"
-        required: false
-      APPS_JSON_BASE64:
-        description: "apps.json base64 (example)"
-        required: false
-
-env:
-  # change this to your target region if needed
-  AWS_REGION: me-central-1
 
 permissions:
   contents: read
 
 jobs:
-  build-and-push:
-    name: Buildx multi-arch and push to ECR
+  build:
+    name: Build and push multi-arch
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: me-central-1
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set image variables
-        # This step centralizes input/env handling so subsequent steps can use env vars reliably.
+      - name: Prepare variables
         run: |
-          # Accept inputs from workflow_dispatch (github.event.inputs.*) or fall back to defaults
           echo "IMAGE_NAME=${{ github.event.inputs.image || 'my-app' }}" >> "$GITHUB_ENV"
-          echo "IMAGE_VERSION=${{ github.event.inputs.version || 'latest' }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ github.event.inputs.version || 'latest' }}" >> "$GITHUB_ENV"
           echo "CONTEXT_PATH=${{ github.event.inputs.context || '.' }}" >> "$GITHUB_ENV"
           echo "DOCKERFILE_PATH=${{ github.event.inputs.dockerfile || 'Dockerfile' }}" >> "$GITHUB_ENV"
-          # pass optional build args into env for use in build step
-          echo "FRAPPE_REPO=${{ github.event.inputs.FRAPPE_REPO || '' }}" >> "$GITHUB_ENV"
-          echo "FRAPPE_BRANCH=${{ github.event.inputs.FRAPPE_BRANCH || '' }}" >> "$GITHUB_ENV"
-          echo "PYTHON_VERSION=${{ github.event.inputs.PY_VERSION || '' }}" >> "$GITHUB_ENV"
-          echo "NODE_VERSION=${{ github.event.inputs.NODE_VERSION || '' }}" >> "$GITHUB_ENV"
-          echo "APPS_JSON_BASE64=${{ github.event.inputs.APPS_JSON_BASE64 || '' }}" >> "$GITHUB_ENV"
-          # Build full ECR registry from secret and region
           echo "ECR_REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" >> "$GITHUB_ENV"
-        shell: bash
 
-      - name: Set up QEMU (for cross-platform builds)
+      - name: Set up QEMU
         uses: tonistiigi/setup-qemu-action@v2
 
-      - name: Set up Docker Buildx
+      - name: Set up buildx
         uses: docker/setup-buildx-action@v3
         with:
           install: true
@@ -87,48 +59,38 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
+      - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v1
         with:
           registry: ${{ env.ECR_REGISTRY }}
 
-      - name: Ensure ECR repository exists
+      - name: Ensure ECR repo exists
         run: |
           set -e
           aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" >/dev/null 2>&1 || \
-          aws ecr create-repository --repository-name "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" \
-            --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
+          aws ecr create-repository --repository-name "$IMAGE_NAME" --region "${{ env.AWS_REGION }}" --image-scanning-configuration scanOnPush=true
 
-      - name: Build and push multi-arch image (amd64 + arm64)
+      - name: Build and push multi-arch image
         uses: docker/build-push-action@v5
         with:
           context: ${{ env.CONTEXT_PATH }}
           file: ${{ env.DOCKERFILE_PATH }}
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-          build-args: |
-            FRAPPE_REPO=${{ env.FRAPPE_REPO }}
-            FRAPPE_BRANCH=${{ env.FRAPPE_BRANCH }}
-            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
-            NODE_VERSION=${{ env.NODE_VERSION }}
-            APPS_JSON_BASE64=${{ env.APPS_JSON_BASE64 }}
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      - name: Verify pushed image supports amd64 and arm64
+      - name: Inspect manifest
         run: |
-          IMAGE="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}"
-          echo "Inspecting image manifest for: $IMAGE"
-          docker buildx imagetools inspect --raw "$IMAGE" > manifest.json
-          echo "Manifest saved to manifest.json"
-          if grep -q '"architecture": "amd64"' manifest.json && grep -q '"architecture": "arm64"' manifest.json; then
-            echo "SUCCESS: manifest contains both amd64 and arm64"
+          IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json
+          if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
+            echo "OK: image manifest contains amd64 and arm64"
           else
-            echo "ERROR: manifest does not contain both amd64 and arm64"
-            cat manifest.json
-            exit 2
+            echo "ERROR: manifest missing amd64/arm64"
+            cat /tmp/manifest.json
+            exit 1
           fi
 
-      - name: Set output image
-        id: set-output
-        run: |
-          echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" >> $GITHUB_OUTPUT
+      - name: Set output
+        id: output
+        run: echo "full_image=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT

@@ -106,4 +106,4 @@ jobs:
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
             --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }
+            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

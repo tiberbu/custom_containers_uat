@@ -1,5 +1,4 @@
 name: Build Image
-
 on:
   push:
     branches:
@@ -29,17 +28,14 @@ on:
         description: base64 encoded string of apps.json
         type: string
       context:
-        description: docker build context (ignored; we use local checkout of frappe_docker)
+        description: kaniko context
         type: string
-        required: false
       dockerfile:
-        description: dockerfile path (ignored; we use frappe_docker/images/custom/Containerfile)
+        description: dockerfile path from context
         type: string
-        required: false
       registry-user:
         description: user name
         required: false
-        type: string
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
@@ -54,6 +50,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # shallow clone to reduce disk usage
+          fetch-depth: 1
 
       - name: Clean Git Cache
         run: git clean -ffdx && git reset --hard
@@ -63,14 +62,23 @@ jobs:
           TOKEN: ${{ secrets.TOKEN }}
         run: python ci/script.py
 
-      # Load repo defaults (fallbacks). Inputs will still win in Buildx args.
+      # Load repo defaults (fallbacks). Inputs will still win in Kaniko args.
       - name: Source Build Env
         run: |
           [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
 
+      # Optional: free some Docker space before heavy work
+      - name: Free disk space (prune docker & tmp)
+        if: always()
+        run: |
+          docker system prune -af || true
+          rm -rf /tmp/* || true
+          df -h
+
       # --- ECR auth & push ---
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -78,23 +86,37 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure ECR repository exists
+      - name: Ensure ECR repository exists (image)
         run: |
           set -e
-          # fallback if IMAGE_NAME is empty to avoid aws cli validation error
-          IMAGE="${IMAGE_NAME:-my-app}"
-          echo "Using IMAGE_NAME=$IMAGE"
-          if ! aws ecr describe-repositories --repository-names "$IMAGE" --region "${AWS_REGION}" >/dev/null 2>&1; then
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
             aws ecr create-repository \
-              --repository-name "$IMAGE" \
-              --region "${AWS_REGION}" \
+              --repository-name "$IMAGE_NAME" \
+              --region "$AWS_REGION" \
               --image-scanning-configuration scanOnPush=true \
               --encryption-configuration encryptionType=AES256
-            echo "Created ECR repository: $IMAGE"
+            echo "Created ECR repository: $IMAGE_NAME"
           else
-            echo "ECR repository already exists: $IMAGE"
+            echo "ECR repository already exists: $IMAGE_NAME"
+          fi
+
+      # --- Ensure cache repository exists (required for Kaniko remote cache) ---
+      - name: Ensure ECR cache repository exists
+        run: |
+          set -e
+          CACHE_REPO_NAME="${IMAGE_NAME}-cache"
+          if ! aws ecr describe-repositories --repository-names "$CACHE_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$CACHE_REPO_NAME" \
+              --region "$AWS_REGION" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            echo "Created ECR cache repository: $CACHE_REPO_NAME"
+          else
+            echo "ECR cache repository already exists: $CACHE_REPO_NAME"
           fi
         env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
           AWS_REGION: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -102,50 +124,22 @@ jobs:
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-      # Use the same checkout of frappe_docker as your working workflow
-      - name: Checkout frappe_docker (build context)
-        uses: actions/checkout@v4
+      - name: Build and push Docker image with Kaniko (with cache)
+        uses: int128/kaniko-action@v1
         with:
-          repository: frappe/frappe_docker
-          ref: main
-          path: frappe_docker
-
-      # Set up Buildx (no external QEMU action)
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          install: true
-
-      - name: Verify Buildx
-        run: |
-          docker buildx ls || true
-          docker buildx inspect --bootstrap || true
-
-      - name: Build and push Docker image with Buildx (multi-arch)
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frappe_docker
-          file: ./frappe_docker/images/custom/Containerfile
           push: true
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          build-args: |
-            FRAPPE_PATH=${{ inputs['frappe-repo'] || env.FRAPPE_REPO }}
-            FRAPPE_BRANCH=${{ inputs['frappe-version'] || env.FRAPPE_BRANCH }}
-            PYTHON_VERSION=${{ inputs['py-version'] || env.PY_VERSION }}
-            NODE_VERSION=${{ inputs['nodejs-version'] || env.NODE_VERSION }}
-            APPS_JSON_BASE64=${{ inputs['apps-json-base64'] || env.APPS_JSON_BASE64 }}
-          tags: |
-            ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-
-      - name: Inspect pushed image manifest
-        run: |
-          IMAGE=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-          docker buildx imagetools inspect --raw "$IMAGE" > /tmp/manifest.json || true
-          echo "Saved manifest to /tmp/manifest.json"
-          if grep -q '"architecture": "amd64"' /tmp/manifest.json && grep -q '"architecture": "arm64"' /tmp/manifest.json; then
-            echo "SUCCESS: manifest contains both amd64 and arm64"
-          else
-            echo "WARNING: manifest does not show both architectures (inspect output below)"
-            cat /tmp/manifest.json || true
-          fi
+          # enable Kaniko cache (store/reuse layers in registry)
+          cache: true
+          # keep cache disabled on the action side? we set cache=true above; also pass kaniko args
+          kaniko-args: |
+            --cache=true
+            --cache-repo=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}-cache
+            --cache-ttl=168h
+            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
+            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
+            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
+            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
+            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
+            --context=${{ inputs.context || env.CONTEXT }}
+            --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}

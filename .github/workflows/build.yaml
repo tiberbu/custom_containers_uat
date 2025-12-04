@@ -50,9 +50,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # shallow clone to reduce disk usage
-          fetch-depth: 1
 
       - name: Clean Git Cache
         run: git clean -ffdx && git reset --hard
@@ -69,14 +66,6 @@ jobs:
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
 
-      # Optional: free some Docker space before heavy work
-      - name: Free disk space (prune docker & tmp)
-        if: always()
-        run: |
-          docker system prune -af || true
-          rm -rf /tmp/* || true
-          df -h
-
       # --- ECR auth & push ---
 
       - name: Configure AWS credentials
@@ -86,7 +75,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure ECR repository exists (image)
+      - name: Ensure ECR repository exists
         run: |
           set -e
           if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
@@ -100,41 +89,17 @@ jobs:
             echo "ECR repository already exists: $IMAGE_NAME"
           fi
 
-      # --- Ensure cache repository exists (required for Kaniko remote cache) ---
-      - name: Ensure ECR cache repository exists
-        run: |
-          set -e
-          CACHE_REPO_NAME="${IMAGE_NAME}-cache"
-          if ! aws ecr describe-repositories --repository-names "$CACHE_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            aws ecr create-repository \
-              --repository-name "$CACHE_REPO_NAME" \
-              --region "$AWS_REGION" \
-              --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256
-            echo "Created ECR cache repository: $CACHE_REPO_NAME"
-          else
-            echo "ECR cache repository already exists: $CACHE_REPO_NAME"
-          fi
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          AWS_REGION: ${{ env.AWS_REGION }}
-
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-      - name: Build and push Docker image with Kaniko (with cache)
+      - name: Build and push Docker image with Kaniko
         uses: int128/kaniko-action@v1
         with:
           push: true
-          # enable Kaniko cache (store/reuse layers in registry)
-          cache: true
-          # keep cache disabled on the action side? we set cache=true above; also pass kaniko args
+          cache: false
           kaniko-args: |
-            --cache=true
-            --cache-repo=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}-cache
-            --cache-ttl=168h
             --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
             --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
             --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
@@ -143,3 +108,4 @@ jobs:
             --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
+      

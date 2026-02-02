@@ -124,7 +124,13 @@ COPY --chown=frappe:frappe repos /home/frappe/frappe-bench/apps
 
 RUN cd /home/frappe/frappe-bench && \
   bench setup requirements && bench build --production && \
+  # copy healthpro_erp assets into sites/assets
+  mkdir -p sites/assets/healthpro_erp && \
+  cp -r apps/healthpro_erp/healthpro_erp/public/* sites/assets/healthpro_erp/ && \
+  cp -r apps/healthpro_erp/node_modules sites/assets/healthpro_erp/node_modules && \
+  echo "✓ healthpro_erp assets copied into sites/assets" && \
   find apps -mindepth 1 -path "*/.git" | xargs rm -fr
+
 
 FROM base as backend
 

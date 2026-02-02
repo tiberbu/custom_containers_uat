@@ -124,6 +124,13 @@ COPY --chown=frappe:frappe repos /home/frappe/frappe-bench/apps
 
 RUN cd /home/frappe/frappe-bench && \
   bench setup requirements && bench build --production && \
+  # Manually create healthpro_erp symlink (bench build fails due to node_modules conflict)
+  cd /home/frappe/frappe-bench/sites/assets && \
+  rm -rf healthpro_erp && \
+  ln -s ../../apps/healthpro_erp/healthpro_erp/public healthpro_erp && \
+  echo "✓ Created healthpro_erp assets symlink" && \
+  ls -la healthpro_erp/compliance-admin-central/assets/ 2>/dev/null || echo "Assets will be built at runtime" && \
+  cd /home/frappe/frappe-bench && \
   find apps -mindepth 1 -path "*/.git" | xargs rm -fr
 
 FROM base as backend

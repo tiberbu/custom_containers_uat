@@ -48,5 +48,20 @@ envsubst '${BACKEND}
   ${PROXY_READ_TIMEOUT}
 	${CLIENT_MAX_BODY_SIZE}' \
   </templates/nginx/frappe.conf.template >/etc/nginx/conf.d/frappe.conf
+  
+# ---- healthpro_erp assets symlink (sites is a volume) ----
+ASSETS_DIR=/home/frappe/frappe-bench/sites/assets
+TARGET_DIR=/home/frappe/frappe-bench/apps/healthpro_erp/healthpro_erp/public
+
+mkdir -p "$ASSETS_DIR"
+
+if [ -d "$TARGET_DIR" ]; then
+  rm -rf "$ASSETS_DIR/healthpro_erp"
+  ln -s "$TARGET_DIR" "$ASSETS_DIR/healthpro_erp"
+  echo "healthpro_erp assets symlink created"
+else
+  echo "WARNING: $TARGET_DIR not found, skipping healthpro_erp assets symlink"
+fi
+# ----------------------------------------------------------
 
 nginx -g 'daemon off;'

@@ -53,4 +53,19 @@ if [[ -n "$ENABLE_OPENTELEMETRY" ]]; then
   echo -e "load_module /opt/opentelemetry-webserver-sdk/WebServerModule/Nginx/1.25.3/ngx_http_opentelemetry_module.so;\n$(cat /etc/nginx/nginx.conf)" > /etc/nginx/nginx.conf
 fi
 
+# ---- healthpro_erp assets symlink (sites is a volume) ----
+ASSETS_DIR=/home/frappe/frappe-bench/sites/assets
+TARGET_DIR=/home/frappe/frappe-bench/apps/healthpro_erp/healthpro_erp/public
+
+mkdir -p "$ASSETS_DIR"
+
+if [ -d "$TARGET_DIR" ]; then
+  rm -rf "$ASSETS_DIR/healthpro_erp"
+  ln -s "$TARGET_DIR" "$ASSETS_DIR/healthpro_erp"
+  echo "healthpro_erp assets symlink created"
+else
+  echo "WARNING: $TARGET_DIR not found, skipping healthpro_erp assets symlink"
+fi
+# ----------------------------------------------------------
+
 nginx -g 'daemon off;'

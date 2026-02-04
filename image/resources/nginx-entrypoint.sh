@@ -49,31 +49,5 @@ envsubst '${BACKEND}
 	${CLIENT_MAX_BODY_SIZE}' \
   </templates/nginx/frappe.conf.template >/etc/nginx/conf.d/frappe.conf
   
-# ---- healthpro_erp assets symlink (sites is a volume) ----
-ASSETS_DIR=/home/frappe/frappe-bench/sites/assets/healthpro_erp
-SOURCE_DIR=/home/frappe/frappe-bench/apps/healthpro_erp/healthpro_erp/public
-NODE_MODULES_DIR=/home/frappe/frappe-bench/apps/healthpro_erp/node_modules
-
-mkdir -p "$ASSETS_DIR"
-
-if [ -d "$SOURCE_DIR" ]; then
-    echo "Copying healthpro_erp assets..."
-    rm -rf "$ASSETS_DIR"/*
-    cp -r "$SOURCE_DIR/"* "$ASSETS_DIR/"
-    echo "✓ healthpro_erp assets copied"
-else
-    echo "⚠️  Source assets not found at $SOURCE_DIR, skipping"
-fi
-
-if [ -d "$NODE_MODULES_DIR" ]; then
-    echo "Copying healthpro_erp node_modules..."
-    rm -rf "$ASSETS_DIR/node_modules"
-    cp -r "$NODE_MODULES_DIR" "$ASSETS_DIR/node_modules"
-    echo "✓ healthpro_erp node_modules copied"
-else
-    echo "⚠️  node_modules not found at $NODE_MODULES_DIR, skipping"
-fi
-
-# ----------------------------------------------------------
 
 nginx -g 'daemon off;'

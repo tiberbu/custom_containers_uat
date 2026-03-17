@@ -115,6 +115,7 @@ RUN export APP_INSTALL_ARGS="" && \
     --no-procfile \
     --no-backups \
     --skip-redis-config-generation \
+    --force \
     --verbose \
     /home/frappe/frappe-bench && \
   cd /home/frappe/frappe-bench && \

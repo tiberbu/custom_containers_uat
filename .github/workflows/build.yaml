@@ -1,4 +1,4 @@
-name: Build Image
+name: Build Frappe Image
 
 on:
   push:
@@ -13,10 +13,10 @@ on:
         description: Image version tag
         type: string
       frappe-repo:
-        description: Frappe repo
+        description: Frappe repo URL
         type: string
       frappe-version:
-        description: Frappe branch
+        description: Frappe branch/tag
         type: string
       py-version:
         description: Python version
@@ -27,22 +27,22 @@ on:
       apps-json-base64:
         description: Base64 encoded string of apps.json
         type: string
-      context:
-        description: Kaniko build context
-        type: string
       dockerfile:
-        description: Dockerfile path from context
+        description: Dockerfile path relative to repo root
         type: string
-      registry-user:
-        description: User name
-        required: false
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
-  IMAGE_NAME: ${{ inputs.image }}
-  IMAGE_VERSION: ${{ inputs.version }}
+  IMAGE_NAME: ${{ inputs.image || env.IMAGE_NAME }}
+  IMAGE_VERSION: ${{ inputs.version || env.IMAGE_VERSION }}
   AWS_REGION: eu-west-2
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-2.amazonaws.com
+  FRAPPE_PATH: ${{ inputs.frappe-repo || env.FRAPPE_REPO }}
+  FRAPPE_BRANCH: ${{ inputs.frappe-version || env.FRAPPE_VERSION }}
+  PYTHON_VERSION: ${{ inputs.py-version || env.PY_VERSION }}
+  NODE_VERSION: ${{ inputs.nodejs-version || env.NODEJS_VERSION }}
+  APPS_JSON_BASE64: ${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
+  DOCKERFILE_PATH: ${{ inputs.dockerfile || env.DOCKERFILE }}
 
 jobs:
   build:
@@ -59,22 +59,18 @@ jobs:
           TOKEN: ${{ secrets.TOKEN }}
         run: python ci/script.py
 
-      # Load repo defaults (fallbacks). Inputs will still win in Kaniko args.
       - name: Source Build Env
         run: |
           [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
 
-      # --- Clean temporary build context ---
       - name: Prepare temporary build context
         run: |
           mkdir -p /tmp/build-context
-          cp -r Dockerfile ci /tmp/build-context/
-          # If you need other required files, copy them here
-          # cp -r apps /tmp/build-context/apps
+          cp -r "$DOCKERFILE_PATH" /tmp/build-context/Dockerfile
+          cp -r ci /tmp/build-context/
 
-      # --- ECR auth & push ---
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -107,11 +103,11 @@ jobs:
           push: true
           cache: false
           kaniko-args: |
-            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
-            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
-            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
-            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
-            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
+            --build-arg=FRAPPE_PATH=${FRAPPE_PATH}
+            --build-arg=FRAPPE_BRANCH=${FRAPPE_BRANCH}
+            --build-arg=PYTHON_VERSION=${PYTHON_VERSION}
+            --build-arg=NODE_VERSION=${NODE_VERSION}
+            --build-arg=APPS_JSON_BASE64=${APPS_JSON_BASE64}
             --context=/tmp/build-context
-            --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
+            --destination=${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_VERSION}
+            --dockerfile=/tmp/build-context/Dockerfile

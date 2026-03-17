@@ -33,26 +33,30 @@ on:
 
 env:
   TOKEN: ${{ secrets.TOKEN }}
-  IMAGE_NAME: ${{ inputs.image || env.IMAGE_NAME }}
-  IMAGE_VERSION: ${{ inputs.version || env.IMAGE_VERSION }}
   AWS_REGION: eu-west-2
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-2.amazonaws.com
-  FRAPPE_PATH: ${{ inputs.frappe-repo || env.FRAPPE_REPO }}
-  FRAPPE_BRANCH: ${{ inputs.frappe-version || env.FRAPPE_VERSION }}
-  PYTHON_VERSION: ${{ inputs.py-version || env.PY_VERSION }}
-  NODE_VERSION: ${{ inputs.nodejs-version || env.NODEJS_VERSION }}
-  APPS_JSON_BASE64: ${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-  DOCKERFILE_PATH: ${{ inputs.dockerfile || env.DOCKERFILE }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Clean Git Cache
         run: git clean -ffdx && git reset --hard
+
+      - name: Set environment variables from inputs or defaults
+        run: |
+          echo "IMAGE_NAME=${{ inputs.image || 'frappe-image' }}" >> $GITHUB_ENV
+          echo "IMAGE_VERSION=${{ inputs.version || 'latest' }}" >> $GITHUB_ENV
+          echo "FRAPPE_PATH=${{ inputs.frappe-repo || 'https://github.com/frappe/frappe' }}" >> $GITHUB_ENV
+          echo "FRAPPE_BRANCH=${{ inputs.frappe-version || 'version-15' }}" >> $GITHUB_ENV
+          echo "PYTHON_VERSION=${{ inputs.py-version || '3.12' }}" >> $GITHUB_ENV
+          echo "NODE_VERSION=${{ inputs.nodejs-version || '20' }}" >> $GITHUB_ENV
+          echo "APPS_JSON_BASE64=${{ inputs.apps-json-base64 || '' }}" >> $GITHUB_ENV
+          echo "DOCKERFILE_PATH=${{ inputs.dockerfile || 'Dockerfile' }}" >> $GITHUB_ENV
 
       - name: Run Python Script to Update JSON
         env:

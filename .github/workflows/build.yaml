@@ -5,36 +5,36 @@ on:
     inputs:
       image:
         description: Image name
-        type: string
         required: true
+        type: string
       version:
         description: Image version tag
-        type: string
         required: true
+        type: string
       frappe-repo:
         description: Frappe repo URL
-        type: string
         required: false
+        type: string
       frappe-version:
         description: Frappe branch/tag
-        type: string
         required: false
+        type: string
       py-version:
         description: Python version
-        type: string
         required: false
+        type: string
       nodejs-version:
         description: NodeJS version
-        type: string
         required: false
+        type: string
       apps-json-base64:
         description: Base64 encoded apps.json
-        type: string
         required: false
+        type: string
       dockerfile:
         description: Dockerfile path relative to repo root
-        type: string
         required: false
+        type: string
 
 env:
   AWS_REGION: eu-west-2
@@ -44,11 +44,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set env variables from inputs or defaults
+      - name: Set dynamic environment variables
         run: |
           echo "IMAGE_NAME=${{ inputs.image }}" >> $GITHUB_ENV
           echo "IMAGE_VERSION=${{ inputs.version }}" >> $GITHUB_ENV
@@ -62,7 +61,7 @@ jobs:
       - name: Clean git cache
         run: git clean -ffdx && git reset --hard
 
-      - name: Prepare temporary build context
+      - name: Prepare build context
         run: |
           mkdir -p /tmp/build-context
           cp -r "$DOCKERFILE_PATH" /tmp/build-context/Dockerfile
@@ -75,9 +74,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure ECR repo exists
+      - name: Ensure ECR repository exists
         run: |
-          set -e
           if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" >/dev/null 2>&1; then
             aws ecr create-repository \
               --repository-name "$IMAGE_NAME" \
@@ -89,9 +87,9 @@ jobs:
       - name: Login to ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
-          | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-      - name: Build and push Docker image with Kaniko
+      - name: Build and push Docker image
         uses: int128/kaniko-action@v1
         with:
           push: true

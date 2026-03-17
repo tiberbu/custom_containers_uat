@@ -1,9 +1,9 @@
 name: Build Image
+
 on:
   push:
     branches:
       - master
-  repository_dispatch:
   workflow_dispatch:
     inputs:
       image:
@@ -25,16 +25,16 @@ on:
         description: NodeJS version
         type: string
       apps-json-base64:
-        description: base64 encoded string of apps.json
+        description: Base64 encoded string of apps.json
         type: string
       context:
-        description: kaniko context
+        description: Kaniko build context
         type: string
       dockerfile:
-        description: dockerfile path from context
+        description: Dockerfile path from context
         type: string
       registry-user:
-        description: user name
+        description: User name
         required: false
 
 env:
@@ -66,8 +66,15 @@ jobs:
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
 
-      # --- ECR auth & push ---
+      # --- Clean temporary build context ---
+      - name: Prepare temporary build context
+        run: |
+          mkdir -p /tmp/build-context
+          cp -r Dockerfile ci /tmp/build-context/
+          # If you need other required files, copy them here
+          # cp -r apps /tmp/build-context/apps
 
+      # --- ECR auth & push ---
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -105,7 +112,6 @@ jobs:
             --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
             --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-            --context=${{ inputs.context || env.CONTEXT }}
+            --context=/tmp/build-context
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
-      

@@ -1,38 +1,42 @@
 name: Build Frappe Image
 
 on:
-  push:
-    branches:
-      - master
   workflow_dispatch:
     inputs:
       image:
         description: Image name
         type: string
+        required: true
       version:
         description: Image version tag
         type: string
+        required: true
       frappe-repo:
         description: Frappe repo URL
         type: string
+        required: false
       frappe-version:
         description: Frappe branch/tag
         type: string
+        required: false
       py-version:
         description: Python version
         type: string
+        required: false
       nodejs-version:
         description: NodeJS version
         type: string
+        required: false
       apps-json-base64:
-        description: Base64 encoded string of apps.json
+        description: Base64 encoded apps.json
         type: string
+        required: false
       dockerfile:
         description: Dockerfile path relative to repo root
         type: string
+        required: false
 
 env:
-  TOKEN: ${{ secrets.TOKEN }}
   AWS_REGION: eu-west-2
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-2.amazonaws.com
 
@@ -41,16 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Clean Git Cache
-        run: git clean -ffdx && git reset --hard
-
-      - name: Set environment variables from inputs or defaults
+      - name: Set env variables from inputs or defaults
         run: |
-          echo "IMAGE_NAME=${{ inputs.image || 'frappe-image' }}" >> $GITHUB_ENV
-          echo "IMAGE_VERSION=${{ inputs.version || 'latest' }}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ inputs.image }}" >> $GITHUB_ENV
+          echo "IMAGE_VERSION=${{ inputs.version }}" >> $GITHUB_ENV
           echo "FRAPPE_PATH=${{ inputs.frappe-repo || 'https://github.com/frappe/frappe' }}" >> $GITHUB_ENV
           echo "FRAPPE_BRANCH=${{ inputs.frappe-version || 'version-15' }}" >> $GITHUB_ENV
           echo "PYTHON_VERSION=${{ inputs.py-version || '3.12' }}" >> $GITHUB_ENV
@@ -58,22 +59,14 @@ jobs:
           echo "APPS_JSON_BASE64=${{ inputs.apps-json-base64 || '' }}" >> $GITHUB_ENV
           echo "DOCKERFILE_PATH=${{ inputs.dockerfile || 'Dockerfile' }}" >> $GITHUB_ENV
 
-      - name: Run Python Script to Update JSON
-        env:
-          TOKEN: ${{ secrets.TOKEN }}
-        run: python ci/script.py
-
-      - name: Source Build Env
-        run: |
-          [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
-          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
-          [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
+      - name: Clean git cache
+        run: git clean -ffdx && git reset --hard
 
       - name: Prepare temporary build context
         run: |
           mkdir -p /tmp/build-context
           cp -r "$DOCKERFILE_PATH" /tmp/build-context/Dockerfile
-          cp -r ci /tmp/build-context/
+          cp -r ci /tmp/build-context/ || echo "No ci folder, skipping"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -82,24 +75,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Ensure ECR repository exists
+      - name: Ensure ECR repo exists
         run: |
           set -e
-          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" >/dev/null 2>&1; then
             aws ecr create-repository \
               --repository-name "$IMAGE_NAME" \
               --region "$AWS_REGION" \
               --image-scanning-configuration scanOnPush=true \
               --encryption-configuration encryptionType=AES256
-            echo "Created ECR repository: $IMAGE_NAME"
-          else
-            echo "ECR repository already exists: $IMAGE_NAME"
           fi
 
-      - name: Login to Amazon ECR
+      - name: Login to ECR
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
-            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
       - name: Build and push Docker image with Kaniko
         uses: int128/kaniko-action@v1
@@ -107,11 +97,11 @@ jobs:
           push: true
           cache: false
           kaniko-args: |
+            --context=/tmp/build-context
+            --dockerfile=/tmp/build-context/Dockerfile
+            --destination=${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_VERSION}
             --build-arg=FRAPPE_PATH=${FRAPPE_PATH}
             --build-arg=FRAPPE_BRANCH=${FRAPPE_BRANCH}
             --build-arg=PYTHON_VERSION=${PYTHON_VERSION}
             --build-arg=NODE_VERSION=${NODE_VERSION}
             --build-arg=APPS_JSON_BASE64=${APPS_JSON_BASE64}
-            --context=/tmp/build-context
-            --destination=${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_VERSION}
-            --dockerfile=/tmp/build-context/Dockerfile

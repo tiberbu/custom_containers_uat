@@ -36,7 +36,6 @@ on:
       registry-user:
         description: user name
         required: false
-
 env:
   TOKEN: ${{ secrets.TOKEN }}
   IMAGE_NAME: ${{ inputs.image }}
@@ -45,7 +44,7 @@ env:
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-2.amazonaws.com
 
 jobs:
-  build:
+  build-amd64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -59,14 +58,11 @@ jobs:
           TOKEN: ${{ secrets.TOKEN }}
         run: python ci/script.py
 
-      # Load repo defaults (fallbacks). Inputs will still win in Kaniko args.
       - name: Source Build Env
         run: |
           [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
-
-      # --- ECR auth & push ---
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -94,7 +90,7 @@ jobs:
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-      - name: Build and push Docker image with Kaniko
+      - name: Build and push AMD64 image with Kaniko
         uses: int128/kaniko-action@v1
         with:
           push: true
@@ -108,4 +104,66 @@ jobs:
             --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
-      
+            --custom-platform=linux/amd64
+
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clean Git Cache
+        run: git clean -ffdx && git reset --hard
+
+      - name: Run Python Script to Update JSON
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+        run: python ci/script.py
+
+      - name: Source Build Env
+        run: |
+          [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
+          [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
+          [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        run: |
+          set -e
+          if ! aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$IMAGE_NAME" \
+              --region "$AWS_REGION" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            echo "Created ECR repository: $IMAGE_NAME"
+          else
+            echo "ECR repository already exists: $IMAGE_NAME"
+          fi
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - name: Build and push ARM64 image with Kaniko
+        uses: int128/kaniko-action@v1
+        with:
+          push: true
+          cache: false
+          kaniko-args: |
+            --build-arg=FRAPPE_PATH=${{ inputs.frappe-repo || env.FRAPPE_REPO }}
+            --build-arg=FRAPPE_BRANCH=${{ inputs.frappe-version || env.FRAPPE_VERSION }}
+            --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
+            --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
+            --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
+            --context=${{ inputs.context || env.CONTEXT }}
+            --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-arm64
+            --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
+            --custom-platform=linux/arm64

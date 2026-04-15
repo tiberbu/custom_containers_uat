@@ -64,6 +64,11 @@ jobs:
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
 
+      - name: Resolve image name and version
+        run: |
+          echo "IMAGE_NAME=${IMAGE_NAME:-${IMAGE:-apps}}" >> $GITHUB_ENV
+          echo "IMAGE_VERSION=${IMAGE_VERSION:-${VERSION:-latest}}" >> $GITHUB_ENV
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -124,6 +129,11 @@ jobs:
           [ -f ./ci/build.env ] && cat ./ci/build.env >> $GITHUB_ENV
           [ -f ./ci/version.txt ] && echo "VERSION=$(cat ./ci/version.txt)" >> $GITHUB_ENV
           [ -f ./ci/apps.json ] && echo "APPS_JSON_BASE64=$(base64 -w 0 ./ci/apps.json)" >> $GITHUB_ENV
+
+      - name: Resolve image name and version
+        run: |
+          echo "IMAGE_NAME=${IMAGE_NAME:-${IMAGE:-apps}}" >> $GITHUB_ENV
+          echo "IMAGE_VERSION=${IMAGE_VERSION:-${VERSION:-latest}}" >> $GITHUB_ENV
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

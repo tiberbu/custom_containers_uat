@@ -101,7 +101,6 @@ jobs:
             --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
             --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-            --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
             --custom-platform=linux/amd64
@@ -163,7 +162,6 @@ jobs:
             --build-arg=PYTHON_VERSION=${{ inputs.py-version || env.PY_VERSION }}
             --build-arg=NODE_VERSION=${{ inputs.nodejs-version || env.NODEJS_VERSION }}
             --build-arg=APPS_JSON_BASE64=${{ inputs.apps-json-base64 || env.APPS_JSON_BASE64 }}
-            --context=${{ inputs.context || env.CONTEXT }}
             --destination=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}-arm64
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
             --custom-platform=linux/arm64

@@ -6,10 +6,12 @@ ARG FRAPPE_BRANCH=version-15
 ARG FRAPPE_PATH=https://github.com/frappe/frappe
 ARG APPS_JSON_BASE64
 
+USER root
+RUN mkdir -p /opt/frappe && chown frappe:frappe /opt/frappe
+
 USER frappe
 
 RUN if [ -n "${APPS_JSON_BASE64}" ]; then \
-      mkdir -p /opt/frappe && \
       echo "${APPS_JSON_BASE64}" | base64 -d > /opt/frappe/apps.json; \
     fi && \
   export APP_INSTALL_ARGS="" && \

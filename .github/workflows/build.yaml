@@ -4,6 +4,7 @@ on:
     branches:
       - master
   repository_dispatch:
+    types: [custom_build]
   workflow_dispatch:
     inputs:
       image:

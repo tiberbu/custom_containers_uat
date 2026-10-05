@@ -7,7 +7,8 @@ ARG FRAPPE_PATH=https://github.com/frappe/frappe
 ARG APPS_JSON_BASE64
 
 USER root
-RUN mkdir -p /opt/frappe && chown frappe:frappe /opt/frappe
+# RUN mkdir -p /opt/frappe && chown frappe:frappe /opt/frappe
+RUN groupadd -f frappe && mkdir -p /opt/frappe && chown frappe:frappe /opt/frappe
 
 USER frappe
 

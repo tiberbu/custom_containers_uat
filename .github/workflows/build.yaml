@@ -81,16 +81,6 @@ jobs:
           role-to-assume: arn:aws:iam::813389018368:role/GitHubActionsRole
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Trivy Image Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-          format: 'table'
-          exit-code: 1
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-        continue-on-error: true
-
       - name: Ensure ECR repository exists
         run: |
           set -e
@@ -125,6 +115,16 @@ jobs:
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
             --custom-platform=linux/amd64
 
+      - name: Trivy Image Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          format: 'table'
+          exit-code: 1
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+        continue-on-error: true
+        
   build-arm64:
     runs-on: ubuntu-24.04-arm
     permissions:          

@@ -123,6 +123,7 @@ jobs:
           exit-code: 1
           ignore-unfixed: true
           severity: HIGH,CRITICAL
+          cache: false
         continue-on-error: true
 
       - name: Trivy Image Scan (JSON)

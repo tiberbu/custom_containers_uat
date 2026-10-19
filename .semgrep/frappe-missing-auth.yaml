@@ -6,27 +6,28 @@ rules:
       regardless of their roles. Add frappe.has_permission() or restrict via roles.
     severity: ERROR
     languages: [python]
-    pattern: |
-      @frappe.whitelist()
-      def $FUNC(...):
-          ...
-    pattern-not: |
-      @frappe.whitelist()
-      @$AUTH(...)
-      def $FUNC(...):
-          ...
-    pattern-not: |
-      @frappe.whitelist()
-      def $FUNC(...):
-          ...
-          frappe.has_permission(...)
-          ...
-    pattern-not: |
-      @frappe.whitelist()
-      def $FUNC(...):
-          ...
-          frappe.only_if(...)
-          ...
+    patterns:
+      - pattern: |
+          @frappe.whitelist()
+          def $FUNC(...):
+              ...
+      - pattern-not: |
+          @frappe.whitelist()
+          @$AUTH(...)
+          def $FUNC(...):
+              ...
+      - pattern-not: |
+          @frappe.whitelist()
+          def $FUNC(...):
+              ...
+              frappe.has_permission(...)
+              ...
+      - pattern-not: |
+          @frappe.whitelist()
+          def $FUNC(...):
+              ...
+              frappe.only_if(...)
+              ...
     metadata:
       cve: CVE-2026-108374
       category: security
@@ -75,7 +76,7 @@ rules:
   - id: frappe-db-get-value-user-input
     message: >
       CVE-2026-108374: Possible unauthorized data access — frappe.db.get_value()
-      called with a variable doctype or filters that may be user-controlled.
+      called with a variable doctype that may be user-controlled.
       Validate and whitelist doctype values before querying.
     severity: ERROR
     languages: [python]

@@ -1,0 +1,60 @@
+rules:
+  - id: frappe-unsafe-db-execute
+    message: >
+      CVE-2026-109608: frappe.db.execute() called with a potentially unsafe query.
+      This method bypasses Frappe's ORM safeguards. Ensure no user input
+      is interpolated into the query string.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.db.execute(f"...")
+      - pattern: frappe.db.execute("..." % ...)
+      - pattern: frappe.db.execute("..." + ...)
+      - pattern: frappe.db.execute("...".format(...))
+    metadata:
+      cve: CVE-2026-109608
+      category: security
+      confidence: HIGH
+
+  - id: frappe-unsafe-get-list-filters
+    message: >
+      CVE-2026-108374: frappe.get_list() called without explicit permission check.
+      In vulnerable Frappe versions before 15.121.0 / 16.34.0, get_list() with
+      user-controlled filters could expose data across users.
+      Ensure ignore_permissions is not set to True.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.get_list(..., ignore_permissions=True, ...)
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: HIGH
+
+  - id: frappe-unsafe-get-all
+    message: >
+      CVE-2026-108374: frappe.get_all() with ignore_permissions=True bypasses
+      all Frappe permission checks — any user can access this data.
+      Remove ignore_permissions=True unless absolutely required.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.get_all(..., ignore_permissions=True, ...)
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: HIGH
+
+  - id: frappe-set-user-administrator
+    message: >
+      CVE-2026-108374: frappe.set_user("Administrator") escalates privileges for
+      subsequent operations. If called inside a whitelisted endpoint this could
+      allow any user to perform admin actions.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.set_user("Administrator")
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: HIGH

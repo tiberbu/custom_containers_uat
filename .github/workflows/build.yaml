@@ -124,6 +124,49 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
         continue-on-error: true
+
+      - name: Trivy Image Scan (JSON)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          format: json
+          output: trivy-${{ env.IMAGE_NAME }}-${{ env.IMAGE_VERSION }}.json
+
+      - name: Trivy Image Scan (SARIF)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          format: sarif
+          output: trivy-${{ env.IMAGE_NAME }}-${{ env.IMAGE_VERSION }}.sarif
+          sarif: true
+
+      - name: Convert JSON to CSV
+        run: |
+          python - <<'EOF'
+          import json, csv
+          with open("trivy-${{ env.IMAGE_NAME }}-${{ env.IMAGE_VERSION }}.json") as f:
+              data = json.load(f)
+          with open("trivy-${{ env.IMAGE_NAME }}-${{ env.IMAGE_VERSION }}.csv", "w", newline="") as f:
+              w = csv.writer(f)
+              w.writerow(["VulnID", "Pkg", "Installed", "Fixed", "Type", "Title", "Severity"])
+              for r in data.get("Results", []):
+                  for v in r.get("Vulnerabilities", []):
+                      w.writerow([v.get("VulnerabilityID"), r.get("PackageName"),
+                                  r.get("InstalledVersion"), v.get("FixedVersion", "-"),
+                                  r.get("Type"), v.get("Title"), v.get("Severity")])
+          EOF
+
+      - name: Upload Trivy reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ env.IMAGE_NAME }}-${{ env.IMAGE_VERSION }}
+          path: |
+            trivy-*.json
+            trivy-*.sarif
+            trivy-*.csv
+          retention-days: 90  
+   
+
         
   build-arm64:
     runs-on: ubuntu-24.04-arm

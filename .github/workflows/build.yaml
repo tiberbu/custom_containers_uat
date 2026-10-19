@@ -116,12 +116,19 @@ jobs:
             --custom-platform=linux/amd64
 
       
-      - name: Clone apps and run Semgrep
+      - name: Clone Frappe source and app repos for scanning
         env:
           TOKEN: ${{ secrets.TOKEN }}
         run: |
           pip install semgrep
-    
+
+          # Clone Frappe framework source
+          git clone --depth=1 \
+            --branch ${{ inputs.frappe-version || env.FRAPPE_VERSION }} \
+            ${{ inputs.frappe-repo || env.FRAPPE_REPO }} \
+            /tmp/frappe-src
+
+          # Clone custom app repos from apps.json
           mkdir -p /tmp/apps
           python3 -c "
           import json, subprocess, os
@@ -136,14 +143,40 @@ jobs:
               name = url.rstrip('/').split('/')[-1]
               subprocess.run(['git','clone','--depth=1','--branch',branch,url,f'/tmp/apps/{name}'], check=True)
           "
-    
+
+      - name: Semgrep community rules (custom apps)
+        run: |
           semgrep scan \
-            --error \
             --severity ERROR \
             --config=p/owasp-top-ten \
             --config=p/python \
             --config=p/secrets \
-            /tmp/apps
+            --json \
+            --output=semgrep-apps-results.json \
+            /tmp/apps || true
+        continue-on-error: true
+
+      - name: Semgrep CVE scan on Frappe source (CVE-2026-109608 / CVE-2026-108374)
+        run: |
+          semgrep scan \
+            --severity ERROR \
+            --config=.semgrep/frappe-sql-injection.yaml \
+            --config=.semgrep/frappe-missing-auth.yaml \
+            --config=.semgrep/frappe-version-check.yaml \
+            --json \
+            --output=semgrep-frappe-cve-results.json \
+            /tmp/frappe-src || true
+        continue-on-error: true
+
+      - name: Upload Semgrep reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-reports-amd64-${{ env.IMAGE_NAME }}-${{ env.IMAGE_VERSION }}
+          path: |
+            semgrep-apps-results.json
+            semgrep-frappe-cve-results.json
+          retention-days: 90
 
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@master

@@ -115,6 +115,36 @@ jobs:
             --dockerfile=${{ inputs.dockerfile || env.DOCKERFILE }}
             --custom-platform=linux/amd64
 
+      
+      - name: Clone apps and run Semgrep
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          pip install semgrep
+    
+          mkdir -p /tmp/apps
+          python3 -c "
+          import json, subprocess, os
+          with open('ci/apps.json') as f:
+              apps = json.load(f)
+          token = os.environ.get('TOKEN', '')
+          for app in apps:
+              url = app['url']
+              branch = app.get('branch', 'main')
+              if token:
+                  url = url.replace('https://', f'https://{token}@')
+              name = url.rstrip('/').split('/')[-1]
+              subprocess.run(['git','clone','--depth=1','--branch',branch,url,f'/tmp/apps/{name}'], check=True)
+          "
+    
+          semgrep scan \
+            --error \
+            --severity ERROR \
+            --config=p/owasp-top-ten \
+            --config=p/python \
+            --config=p/secrets \
+            /tmp/apps
+
       - name: Trivy Image Scan
         uses: aquasecurity/trivy-action@master
         with:

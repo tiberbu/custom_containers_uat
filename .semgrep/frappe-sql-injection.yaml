@@ -1,0 +1,75 @@
+rules:
+  - id: frappe-sqli-string-format
+    message: >
+      CVE-2026-109608: SQL injection risk — user input interpolated directly into
+      frappe.db.sql() via % formatting. Use parameterized queries:
+      frappe.db.sql("SELECT ... WHERE x = %s", (value,))
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.db.sql("..." % ...)
+    metadata:
+      cve: CVE-2026-109608
+      category: security
+      confidence: HIGH
+
+  - id: frappe-sqli-fstring
+    message: >
+      CVE-2026-109608: SQL injection risk — f-string used to build SQL query in
+      frappe.db.sql(). User-controlled values inside f-strings are unsafe.
+      Use parameterized queries instead.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.db.sql(f"...")
+    metadata:
+      cve: CVE-2026-109608
+      category: security
+      confidence: HIGH
+
+  - id: frappe-sqli-format-method
+    message: >
+      CVE-2026-109608: SQL injection risk — .format() used to build SQL query in
+      frappe.db.sql(). Use parameterized queries instead.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.db.sql("...".format(...))
+    metadata:
+      cve: CVE-2026-109608
+      category: security
+      confidence: HIGH
+
+  - id: frappe-sqli-concatenation
+    message: >
+      CVE-2026-109608: SQL injection risk — string concatenation used to build SQL
+      query in frappe.db.sql(). Use parameterized queries instead.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.db.sql("..." + ...)
+    metadata:
+      cve: CVE-2026-109608
+      category: security
+      confidence: HIGH
+
+  - id: frappe-sqli-variable-query
+    message: >
+      CVE-2026-109608: SQL injection risk — variable passed directly to
+      frappe.db.sql() instead of a string literal. Ensure this variable
+      is not built from user input.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: |
+          $QUERY = "..." % ...
+          ...
+          frappe.db.sql($QUERY, ...)
+      - pattern: |
+          $QUERY = f"..."
+          ...
+          frappe.db.sql($QUERY, ...)
+    metadata:
+      cve: CVE-2026-109608
+      category: security
+      confidence: MEDIUM

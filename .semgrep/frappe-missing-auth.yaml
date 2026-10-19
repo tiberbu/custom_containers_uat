@@ -1,0 +1,88 @@
+rules:
+  - id: frappe-whitelist-no-auth-decorator
+    message: >
+      CVE-2026-108374: Missing authorization — @frappe.whitelist() endpoint has no
+      role or permission check. Any authenticated user can call this endpoint
+      regardless of their roles. Add frappe.has_permission() or restrict via roles.
+    severity: ERROR
+    languages: [python]
+    pattern: |
+      @frappe.whitelist()
+      def $FUNC(...):
+          ...
+    pattern-not: |
+      @frappe.whitelist()
+      @$AUTH(...)
+      def $FUNC(...):
+          ...
+    pattern-not: |
+      @frappe.whitelist()
+      def $FUNC(...):
+          ...
+          frappe.has_permission(...)
+          ...
+    pattern-not: |
+      @frappe.whitelist()
+      def $FUNC(...):
+          ...
+          frappe.only_if(...)
+          ...
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: MEDIUM
+
+  - id: frappe-allow-guest-unintentional
+    message: >
+      CVE-2026-108374: Unauthenticated access — @frappe.whitelist(allow_guest=True)
+      exposes this endpoint to unauthenticated users with no session required.
+      Verify this is intentional and that no sensitive data is returned.
+    severity: ERROR
+    languages: [python]
+    pattern: |
+      @frappe.whitelist(allow_guest=True)
+      def $FUNC(...):
+          ...
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: HIGH
+
+  - id: frappe-get-doc-no-permission-check
+    message: >
+      CVE-2026-108374: Missing permission check — frappe.get_doc() called without
+      verifying the current user has access to this document.
+      Add frappe.has_permission(doctype, doc=doc) before returning data.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: |
+          def $FUNC(...):
+              ...
+              $DOC = frappe.get_doc($DOCTYPE, $NAME)
+              ...
+              return $DOC
+      - pattern-not: |
+          def $FUNC(...):
+              ...
+              frappe.has_permission(...)
+              ...
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: MEDIUM
+
+  - id: frappe-db-get-value-user-input
+    message: >
+      CVE-2026-108374: Possible unauthorized data access — frappe.db.get_value()
+      called with a variable doctype or filters that may be user-controlled.
+      Validate and whitelist doctype values before querying.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: frappe.db.get_value($VAR, ...)
+      - pattern-not: frappe.db.get_value("...", ...)
+    metadata:
+      cve: CVE-2026-108374
+      category: security
+      confidence: MEDIUM

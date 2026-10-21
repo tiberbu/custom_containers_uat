@@ -33,6 +33,14 @@ RUN if [ -n "${APPS_JSON_BASE64}" ]; then \
 
 FROM frappe/base:${FRAPPE_BRANCH} AS backend
 
+USER root
+# Override layer (G-BUILD self-heal): the pinned frappe/base:version-15 image
+# (frozen 2026-10-14) ships chromium + libjq with 74 CVE findings. Upgrade those
+# packages from the current distro repos before the app layers are added.
+RUN apt-get update -qq && \
+    apt-get install -y --only-upgrade --no-install-recommends \
+      chromium-common chromium-headless-shell libjq1 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 USER frappe
 
 # COPY --from=builder --chown=frappe:frappe /home/frappe/frappe-bench /home/frappe/frappe-bench

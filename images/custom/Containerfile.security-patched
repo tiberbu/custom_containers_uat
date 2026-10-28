@@ -1,0 +1,84 @@
+ARG FRAPPE_BRANCH=version-15
+
+FROM frappe/build:${FRAPPE_BRANCH} AS builder
+
+ARG FRAPPE_BRANCH=version-15
+ARG FRAPPE_PATH=https://github.com/frappe/frappe
+ARG APPS_JSON_BASE64
+
+USER root
+RUN groupadd -f frappe && mkdir -p /opt/frappe && chown frappe:frappe /opt/frappe
+
+USER frappe
+
+RUN if [ -n "${APPS_JSON_BASE64}" ]; then \
+      echo "${APPS_JSON_BASE64}" | base64 -d > /opt/frappe/apps.json; \
+    fi && \
+  export APP_INSTALL_ARGS="" && \
+  if [ -f /opt/frappe/apps.json ] && [ -s /opt/frappe/apps.json ]; then \
+    export APP_INSTALL_ARGS="--apps_path=/opt/frappe/apps.json"; \
+  fi && \
+  bench init ${APP_INSTALL_ARGS}\
+    --frappe-branch=${FRAPPE_BRANCH} \
+    --frappe-path=${FRAPPE_PATH} \
+    --no-procfile \
+    --no-backups \
+    --skip-redis-config-generation \
+    --verbose \
+    /home/frappe/frappe-bench && \
+  cd /home/frappe/frappe-bench && \
+  echo "{}" > sites/common_site_config.json && \
+  find apps -mindepth 1 -path "*/.git" | xargs rm -fr
+
+FROM frappe/base:${FRAPPE_BRANCH} AS backend
+
+USER root
+
+# Security patch layer — upgrades OS packages with known CVEs in the base image.
+# This file is used for security-test builds only.
+# Do NOT replace images/custom/Containerfile with this without team approval.
+RUN apt-get update -qq && \
+    apt-get install -y --only-upgrade --no-install-recommends \
+      chromium-common chromium-headless-shell libjq1 \
+      perl perl-base perl-modules-5.36 libperl5.36 \
+      libexpat1 \
+      libssl3 libssl-dev openssl \
+      libpng16-16 \
+      libbrotli1 \
+      tar && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder --chown=frappe /home/frappe/frappe-bench /home/frappe/frappe-bench
+
+# Upgrade Python packages with known CVEs
+RUN /home/frappe/frappe-bench/env/bin/pip install --upgrade \
+      "PyJWT>=2.14.0" \
+      "certifi>=2026.10.18" \
+      "weasyprint>=70.0" \
+      "pypdf>=6.19.0" \
+      "Werkzeug>=3.1.9" \
+      "oauthlib>=4.0.0" \
+      "wheel>=0.46.2"
+
+USER frappe
+
+WORKDIR /home/frappe/frappe-bench
+
+VOLUME [ \
+  "/home/frappe/frappe-bench/sites", \
+  "/home/frappe/frappe-bench/sites/assets", \
+  "/home/frappe/frappe-bench/logs" \
+]
+
+CMD [ \
+  "/home/frappe/frappe-bench/env/bin/gunicorn", \
+  "--chdir=/home/frappe/frappe-bench/sites", \
+  "--bind=0.0.0.0:8000", \
+  "--threads=4", \
+  "--workers=2", \
+  "--worker-class=gthread", \
+  "--worker-tmp-dir=/dev/shm", \
+  "--timeout=120", \
+  "--preload", \
+  "frappe.app:application" \
+]

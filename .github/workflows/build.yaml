@@ -116,6 +116,26 @@ jobs:
             --custom-platform=linux/amd64
 
       
+      # ── Verify CVE-2026-109608 patch (reportview.py) ──────────────────
+      - name: Verify CVE-2026-109608 patch in image
+        run: |
+          FRAPPE_VERSION="${{ inputs.frappe-version || env.FRAPPE_VERSION }}"
+          IMAGE_REF="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}"
+
+          echo "Checking CVE-2026-109608 patch (run=0) in reportview.py for Frappe ${FRAPPE_VERSION}..."
+
+          PATCH_CHECK=$(docker run --rm --entrypoint="" \
+            "$IMAGE_REF" \
+            grep -n "run=0" /home/frappe/frappe-bench/apps/frappe/frappe/desk/reportview.py \
+            2>/dev/null || echo "NOT_FOUND")
+
+          if echo "$PATCH_CHECK" | grep -q "run=0"; then
+            echo "::notice::PASS — CVE-2026-109608 patch confirmed in ${FRAPPE_VERSION}: ${PATCH_CHECK}"
+          else
+            echo "::warning::CVE-2026-109608 patch (run=0) not found in reportview.py for ${FRAPPE_VERSION}"
+          fi
+        continue-on-error: true
+
       - name: Clone Frappe source and app repos for scanning
         env:
           TOKEN: ${{ secrets.TOKEN }}

@@ -30,6 +30,9 @@ RUN if [ -n "${APPS_JSON_BASE64}" ]; then \
   echo "{}" > sites/common_site_config.json && \
   find apps -mindepth 1 -path "*/.git" | xargs rm -fr
 
+# Remove esbuild build binary — not needed in production image
+RUN find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete
+
 FROM frappe/base:${FRAPPE_BRANCH} AS backend
 
 USER root
@@ -48,6 +51,11 @@ RUN apt-get update -qq && \
       tar && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Remove unnecessary packages not required for production Frappe backend
+RUN apt-get remove -y --purge vim vim-common vim-runtime vim-tiny 2>/dev/null || true && \
+    apt-get autoremove -y && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder --chown=frappe /home/frappe/frappe-bench /home/frappe/frappe-bench
 
 # Upgrade Python packages with known CVEs
@@ -58,7 +66,8 @@ RUN /home/frappe/frappe-bench/env/bin/pip install --upgrade \
       "pypdf>=6.19.0" \
       "Werkzeug>=3.1.9" \
       "oauthlib>=4.0.0" \
-      "wheel>=0.46.2"
+      "wheel>=0.46.2" \
+      "Pillow>=13.0.0"
 
 USER frappe
 

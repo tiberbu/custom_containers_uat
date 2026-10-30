@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1
+
+ARG FRAPPE_BRANCH=version-15
+
+FROM frappe/build:${FRAPPE_BRANCH} AS builder
+
+ARG FRAPPE_BRANCH=version-15
+ARG FRAPPE_PATH=https://github.com/frappe/frappe
+
+USER root
+RUN groupadd -f frappe && mkdir -p /opt/frappe && chown frappe:frappe /opt/frappe
+COPY --chown=frappe:frappe --chmod=0500 images/custom/git-askpass.sh /opt/frappe/git-askpass.sh
+
+USER frappe
+
+RUN --mount=type=secret,id=apps_json,required=true,uid=1000 \
+    --mount=type=secret,id=github_token,required=true,uid=1000 \
+  test -s /run/secrets/apps_json && \
+  test -s /run/secrets/github_token && \
+  export GIT_ASKPASS=/opt/frappe/git-askpass.sh \
+         GIT_TERMINAL_PROMPT=0 \
+         GIT_CONFIG_GLOBAL=/dev/null \
+         GIT_CONFIG_NOSYSTEM=1 && \
+  bench init --apps_path=/run/secrets/apps_json \
+    --frappe-branch=${FRAPPE_BRANCH} \
+    --frappe-path=${FRAPPE_PATH} \
+    --no-procfile \
+    --no-backups \
+    --skip-redis-config-generation \
+    --verbose \
+    /home/frappe/frappe-bench && \
+  cd /home/frappe/frappe-bench && \
+  echo "{}" > sites/common_site_config.json && \
+  find apps -mindepth 1 -path "*/.git" | xargs rm -fr
+
+FROM frappe/base:${FRAPPE_BRANCH} AS backend
+
+USER root
+# Override layer (G-BUILD self-heal): the pinned frappe/base:version-15 image
+# (frozen 2026-10-14) ships chromium + libjq with 74 CVE findings. Upgrade those
+# packages from the current distro repos before the app layers are added.
+RUN apt-get update -qq && \
+    apt-get install -y --only-upgrade --no-install-recommends \
+      chromium-common chromium-headless-shell libjq1 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+USER frappe
+
+COPY --from=builder --chown=frappe /home/frappe/frappe-bench /home/frappe/frappe-bench
+
+WORKDIR /home/frappe/frappe-bench
+
+VOLUME [ \
+  "/home/frappe/frappe-bench/sites", \
+  "/home/frappe/frappe-bench/sites/assets", \
+  "/home/frappe/frappe-bench/logs" \
+]
+
+CMD [ \
+  "/home/frappe/frappe-bench/env/bin/gunicorn", \
+  "--chdir=/home/frappe/frappe-bench/sites", \
+  "--bind=0.0.0.0:8000", \
+  "--threads=4", \
+  "--workers=2", \
+  "--worker-class=gthread", \
+  "--worker-tmp-dir=/dev/shm", \
+  "--timeout=120", \
+  "--preload", \
+  "frappe.app:application" \
+]

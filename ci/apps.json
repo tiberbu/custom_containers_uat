@@ -6,5 +6,9 @@
   {
     "url": "https://github.com/tiberbu/helpdesk.git",
     "branch": "master"
+  },
+  {
+    "url": "https://<TOKEN>@github.com/tiberbu/openmeter_mediator.git",
+    "branch": "feat/hmis-essentials-postman"
   }
 ]

@@ -58,6 +58,12 @@ RUN apt-get remove -y --purge vim vim-common vim-runtime vim-tiny 2>/dev/null ||
 
 COPY --from=builder --chown=frappe /home/frappe/frappe-bench /home/frappe/frappe-bench
 
+# Remove esbuild binaries from all app node_modules — build artifact not needed in production
+USER root
+RUN find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete && \
+    find /home/frappe/frappe-bench/apps -path "*/node_modules/.bin/esbuild" -delete
+USER frappe
+
 # Upgrade Python packages with known CVEs
 RUN /home/frappe/frappe-bench/env/bin/pip install --upgrade \
       "PyJWT>=2.14.0" \

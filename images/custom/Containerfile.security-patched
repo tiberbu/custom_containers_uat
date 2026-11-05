@@ -60,8 +60,9 @@ COPY --from=builder --chown=frappe /home/frappe/frappe-bench /home/frappe/frappe
 
 # Remove esbuild binaries from all app node_modules — build artifact not needed in production
 USER root
-RUN find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete && \
-    find /home/frappe/frappe-bench/apps -path "*/node_modules/.bin/esbuild" -delete
+RUN rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild && \
+    rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/@esbuild && \
+    find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete 2>/dev/null || true
 USER frappe
 
 # Upgrade Python packages with known CVEs

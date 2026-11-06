@@ -58,10 +58,14 @@ RUN apt-get remove -y --purge vim vim-common vim-runtime vim-tiny 2>/dev/null ||
 
 COPY --from=builder --chown=frappe /home/frappe/frappe-bench /home/frappe/frappe-bench
 
-# Remove esbuild binaries from all app node_modules — build artifact not needed in production
+# Remove esbuild binaries — platform-specific packages not needed in production
 USER root
-RUN rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild && \
-    rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/@esbuild && \
+RUN rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild \
+           /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-64 \
+           /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-32 \
+           /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-arm64 \
+           /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-arm \
+           /home/frappe/frappe-bench/apps/frappe/node_modules/@esbuild && \
     find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete 2>/dev/null || true
 USER frappe
 

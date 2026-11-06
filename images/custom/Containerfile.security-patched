@@ -42,7 +42,6 @@ USER root
 # Do NOT replace images/custom/Containerfile with this without team approval.
 RUN apt-get update -qq && \
     apt-get install -y --only-upgrade --no-install-recommends \
-      chromium-common chromium-headless-shell libjq1 \
       perl perl-base perl-modules-5.36 libperl5.36 \
       libexpat1 \
       libssl3 libssl-dev openssl \
@@ -51,8 +50,14 @@ RUN apt-get update -qq && \
       tar && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Remove unnecessary packages not required for production Frappe backend
-RUN apt-get remove -y --purge vim vim-common vim-runtime vim-tiny 2>/dev/null || true && \
+# Remove packages not required for production Frappe backend
+# - vim: text editor, zero runtime purpose in production
+# - chromium: Frappe uses wkhtmltopdf for PDF, not Chromium
+# - libjq1: JSON query library, not used by Frappe core
+RUN apt-get remove -y --purge \
+      vim vim-common vim-runtime vim-tiny \
+      chromium-common chromium-headless-shell \
+      libjq1 2>/dev/null || true && \
     apt-get autoremove -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -90,14 +95,18 @@ RUN . /home/frappe/.nvm/nvm.sh && \
       socket.io-parser@4.2.6 \
       svgo@3.3.5 2>/dev/null || true
 
-# Remove esbuild after all npm steps — must be last to prevent reinstall by npm
+# Remove esbuild and stale vulnerable packages — must be last step after all npm installs
 RUN rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-64 \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-32 \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-arm64 \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-arm \
            /home/frappe/frappe-bench/apps/frappe/node_modules/@esbuild && \
-    find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete 2>/dev/null || true
+    find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete 2>/dev/null || true && \
+    find /home/frappe/frappe-bench/apps -path "*/node_modules/loader-utils" \
+         -not -path "*/loader-utils/node_modules/*" | \
+         xargs -I{} sh -c 'v=$(node -e "try{console.log(require(\"{}/package.json\").version)}catch(e){}" 2>/dev/null); echo "$v {}" ' | \
+         awk '$1 ~ /^0\./ {print $2}' | xargs rm -rf 2>/dev/null || true
 
 USER frappe
 

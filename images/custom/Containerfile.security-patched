@@ -95,20 +95,21 @@ RUN . /home/frappe/.nvm/nvm.sh && \
       socket.io-parser@4.2.6 \
       svgo@3.3.5 2>/dev/null || true
 
-# Remove esbuild and fix nested vulnerable packages — must be last step after all npm installs
-RUN rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild \
+# Fix nested vulnerable packages and remove all esbuild binaries
+# Note: esbuild delete is ALWAYS last — npm install reinstalls it as a transitive dep
+RUN rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/generic-names/node_modules/loader-utils && \
+    . /home/frappe/.nvm/nvm.sh && \
+    cd /home/frappe/frappe-bench/apps/frappe && \
+    npm install --save-exact \
+      loader-utils@2.0.4 \
+      shell-quote@1.11.0 2>/dev/null || true && \
+    rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-64 \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-32 \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-arm64 \
            /home/frappe/frappe-bench/apps/frappe/node_modules/esbuild-linux-arm \
            /home/frappe/frappe-bench/apps/frappe/node_modules/@esbuild && \
-    find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete 2>/dev/null || true && \
-    rm -rf /home/frappe/frappe-bench/apps/frappe/node_modules/generic-names/node_modules/loader-utils && \
-    . /home/frappe/.nvm/nvm.sh && \
-    cd /home/frappe/frappe-bench/apps/frappe && \
-    npm install --save-exact \
-      loader-utils@2.0.4 \
-      shell-quote@1.11.0 2>/dev/null || true
+    find /home/frappe/frappe-bench/apps -name "esbuild" -type f -delete 2>/dev/null || true
 
 USER frappe
 
